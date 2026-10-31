@@ -1,0 +1,71 @@
+﻿name: Build BlackFox DWG
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+          - rid: linux-x64
+            os: ubuntu-latest
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+          - rid: osx-x64
+            os: macos-15-intel
+          - rid: osx-arm64
+            os: macos-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish converter
+        shell: bash
+        run: |
+          dotnet publish BlackFoxDWG/BlackFoxDWG.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=false \
+            -o publish
+
+      - name: Test executable
+        shell: bash
+        run: |
+          set +e
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            ./publish/BlackFoxDWG.exe
+          else
+            chmod +x ./publish/BlackFoxDWG
+            ./publish/BlackFoxDWG
+          fi
+          status=$?
+          set -e
+          if [[ "$status" -ne 1 ]]; then
+            echo "Unexpected exit code: $status"
+            exit 1
+          fi
+          echo "Executable launched successfully"
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: blackfox-dwg-${{ matrix.rid }}
+          path: |
+            publish/BlackFoxDWG
+            publish/BlackFoxDWG.exe
+          if-no-files-found: error
+
+
