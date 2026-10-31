@@ -24,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -60,13 +60,15 @@ jobs:
           echo "All three DWG files created successfully"
 
       - name: Upload build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: blackfox-dwg-${{ matrix.rid }}
           path: |
             publish/BlackFoxDWG
             publish/BlackFoxDWG.exe
           if-no-files-found: error
+
+
 
 
 
