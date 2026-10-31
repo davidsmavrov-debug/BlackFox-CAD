@@ -60,13 +60,14 @@ jobs:
           echo "All three DWG files created successfully"
 
       - name: Upload build
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: blackfox-dwg-${{ matrix.rid }}
           path: |
             publish/BlackFoxDWG
             publish/BlackFoxDWG.exe
           if-no-files-found: error
+
 
 
 
