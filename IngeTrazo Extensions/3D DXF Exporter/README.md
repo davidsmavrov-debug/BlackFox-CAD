@@ -1,4 +1,4 @@
-﻿# BlackFox CAD Exporter
+# BlackFox CAD Exporter
 
 Version 1.0.0
 
@@ -25,7 +25,7 @@ The extension requires `ezdxf` in IngeTrazo's Python environment.
 
 ## DWG converter
 
-DWG export uses BlackFox DWG Converter v1.0.1.
+DWG export uses BlackFox DWG Converter v1.0.2.
 
 On the first DWG export, the extension downloads the appropriate executable
 from the project's GitHub release and installs it in a versioned `BlackFoxDWG`
@@ -69,7 +69,7 @@ an open-source .NET library developed by Albert Domenech.
 
 BlackFox DWG Converter uses ACadSharp version 3.8.35.
 
-ACadSharp is licensed under the MIT License. Its original copyright
+ACadSharp is licensed under the MIT License. Its license notice is included with each converter download. Its original copyright
 and license notice are available in the upstream repository:
 https://github.com/DomCR/ACadSharp/blob/master/LICENSE
 

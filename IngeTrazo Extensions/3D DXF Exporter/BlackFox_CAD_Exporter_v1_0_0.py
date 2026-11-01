@@ -23,18 +23,18 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "v1.0.1"
+VERSION = "v1.0.2"
 RELEASE_URL = (
     "https://github.com/davidsmavrov-debug/BlackFox-CAD"
-    "/releases/download/dwg-v1.0.1/"
+    "/releases/download/dwg-v1.0.2/"
 )
 
 CHECKSUMS = {
-    "linux-arm64": "ab66c24506b82bfcf7fac05af28b0b31b33081b973de91dac540155e14ab53bb",
-    "linux-x64": "79dc5b9772669ee4170438bcfd59161bcc9d000ec7acb84d83e288b69cea7f42",
-    "osx-arm64": "f1812be6c7af2f0321f72026580578d0d22592b3b1a9c11f84d9ecc29db024c4",
-    "osx-x64": "59d4e0284dacc36eedc011a15b1c73a7fb973d09a3983b03c745a57fde97dc2e",
-    "win-x64": "9194715569c518bd8ef601054fb2d3f44932493bac57b9cb0935ac19f9835c7d",
+    "linux-arm64": "cf9efc7c525a43a3f2b8f7cb1f020fd754c3cd0c221e2accfb29584eb14da349",
+    "linux-x64": "03ea62e84c3bc4e660129fc64da7c0a4844912cc96e18be0af6cb08626794963",
+    "osx-arm64": "1b165220b7a13fb69f37d5ac61830401a530587f9d442d117c530e695c7cb1b3",
+    "osx-x64": "e02ae112be5b3df3ff77997ea684d45234e6fa6027bb49a2cdd3a878ad6ca175",
+    "win-x64": "fd2e6b7b47b414f1e61187c8724213f6be064fd915c55a2802a9d6343c7aa073",
 }
 
 
@@ -90,7 +90,13 @@ def get_converter():
     directory = Path(__file__).resolve().parent / "BlackFoxDWG" / VERSION
     executable = directory / filename
 
-    if executable.is_file() and _sha256_file(executable) == BINARY_CHECKSUMS[rid]:
+    license_file = directory / "THIRD_PARTY_LICENSE_ACadSharp.txt"
+    if (
+        executable.is_file()
+        and _sha256_file(executable) == BINARY_CHECKSUMS[rid]
+        and license_file.is_file()
+        and _sha256_file(license_file) == "3ca5f3195b1f3056543596f7bb413bb143484c53ca9def699af8f7964f509190"
+    ):
         return executable
 
     directory.mkdir(parents=True, exist_ok=True)
@@ -126,7 +132,14 @@ def get_converter():
                 item for item in archive.infolist()
                 if not item.is_dir()
             ]
-            if len(entries) != 1 or entries[0].filename != filename:
+            license_name = "THIRD_PARTY_LICENSE_ACadSharp.txt"
+            entry_map = {item.filename: item for item in entries}
+
+            if (
+                len(entries) != 2
+                or len(entry_map) != 2
+                or set(entry_map) != {filename, license_name}
+            ):
                 raise RuntimeError("Unexpected converter ZIP contents.")
 
             fd, temporary_name = tempfile.mkstemp(
@@ -136,7 +149,7 @@ def get_converter():
             temporary = Path(temporary_name)
 
             try:
-                with archive.open(entries[0]) as source:
+                with archive.open(entry_map[filename]) as source:
                     with temporary.open("wb") as output:
                         while True:
                             chunk = source.read(1024 * 1024)
@@ -149,6 +162,20 @@ def get_converter():
 
                 if _sha256_file(temporary) != BINARY_CHECKSUMS[rid]:
                     raise RuntimeError("BlackFox DWG executable failed SHA-256 verification.")
+
+                license_destination = directory / license_name
+                license_bytes = archive.read(entry_map[license_name])
+                license_digest = hashlib.sha256(license_bytes).hexdigest()
+
+                if license_digest != "3ca5f3195b1f3056543596f7bb413bb143484c53ca9def699af8f7964f509190":
+                    raise RuntimeError("ACadSharp license notice failed SHA-256 verification.")
+
+                license_temporary = directory / (license_name + ".tmp")
+                try:
+                    license_temporary.write_bytes(license_bytes)
+                    os.replace(str(license_temporary), str(license_destination))
+                finally:
+                    license_temporary.unlink(missing_ok=True)
 
                 os.replace(str(temporary), str(executable))
             finally:
