@@ -1,0 +1,16 @@
+﻿# Python generated files
+__pycache__/
+*.pyc
+
+# Local converter downloads and caches
+IngeTrazo Extensions/3D DXF Exporter/BlackFoxDWG/
+
+# Development backups and experiments
+*.bak
+*_local_DWG_test.py
+IngeTrazo Extensions/3D DXF Exporter/blackfox_dwg_downloader.py
+IngeTrazo Extensions/3D DXF Exporter/BlackFox_3D_CAD_Exporter_v0_9_5_2.py
+
+# .NET build output
+**/bin/
+**/obj/
