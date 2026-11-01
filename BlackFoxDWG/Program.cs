@@ -1,4 +1,4 @@
-﻿using ACadSharp;
+using ACadSharp;
 using ACadSharp.IO;
 
 if (args.Length != 3)
@@ -28,6 +28,25 @@ try
 {
     Console.WriteLine($"Reading {input}");
     CadDocument drawing = DxfReader.Read(input);
+
+    // Repair a missing current dimension-style reference.
+    // Preserve the original style whenever it resolves correctly.
+    string requestedStyle = drawing.Header.CurrentDimensionStyleName;
+
+    try
+    {
+        _ = drawing.Header.CurrentDimensionStyle;
+    }
+    catch (KeyNotFoundException)
+    {
+        Console.WriteLine(
+            $"Warning: Dimension style '{requestedStyle}' is missing. Trying Standard.");
+
+        drawing.Header.CurrentDimensionStyleName = "Standard";
+
+        // Verify that Standard actually exists.
+        _ = drawing.Header.CurrentDimensionStyle;
+    }
 
     drawing.Header.Version = version;
 
