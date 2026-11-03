@@ -48,6 +48,7 @@ jobs:
           cp libredwg/programs/dxf2dwg.exe artifact/
           cp libredwg/src/.libs/*.dll artifact/ 2>/dev/null || true
           ldd artifact/dxf2dwg.exe || true
+          ldd artifact/libredwg-0.dll || true
 
       - name: Upload experimental build
         uses: actions/upload-artifact@v4
@@ -55,5 +56,6 @@ jobs:
           name: libredwg-windows-x64-prototype
           path: artifact/
           if-no-files-found: error
+
 
 
