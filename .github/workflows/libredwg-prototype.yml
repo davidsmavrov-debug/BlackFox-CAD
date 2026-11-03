@@ -45,7 +45,7 @@ jobs:
       - name: Collect converter and dependencies
         run: |
           mkdir -p artifact
-          cp libredwg/programs/dxf2dwg.exe artifact/
+          cp libredwg/programs/.libs/dxf2dwg.exe artifact/
           cp libredwg/src/.libs/*.dll artifact/ 2>/dev/null || true
           cp /mingw64/bin/libiconv-2.dll artifact/
           ldd artifact/dxf2dwg.exe || true
