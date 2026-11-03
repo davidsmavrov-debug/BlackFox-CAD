@@ -1,77 +1,30 @@
-# BlackFox CAD Exporter
+# BlackFox CAD Exporter v1.0.1
 
-Version 1.0.0
+![BlackFox CAD Exporter](blackfox_cad_exporter.png)
 
-A free and open-source DXF/DWG export extension for IngeTrazo.
+Free and open-source IngeTrazo extension for exporting 3D CAD geometry to DXF and DWG.
 
-## Installation
+## Install
 
-1. Download `BlackFox_CAD_Exporter_v1_0_0.py` from the release.
-2. In IngeTrazo, open **Extensions > Open plugins folder**.
-3. Copy the Python file into that folder.
-4. Restart IngeTrazo.
-
-The extension requires `ezdxf` in IngeTrazo's Python environment.
-
-## Features
-
-- Export 3D CAD geometry to DXF and DWG.
-- Preserve supported layers and drawing structure.
-- Export supported groups, components, and annotations.
-- Select DXF/DWG output versions.
-- Export the complete model or selected geometry.
-- Automatically download the DWG converter when needed.
-- Verify downloaded and cached converter binaries using SHA-256.
+Place `BlackFox_CAD_Exporter_v1_0_1.py` in IngeTrazo's **Extensions > Open plugins folder**, then restart IngeTrazo. The extension requires `ezdxf` in IngeTrazo's Python environment. The image is for the extension's GitHub/catalog listing; it does not need to be installed alongside the Python file.
 
 ## DWG converter
 
-DWG export uses BlackFox DWG Converter v1.0.2.
+The first DWG export prompts for permission before downloading the matching platform converter from the [BlackFox Rust converter v1.0.0 release](https://github.com/davidsmavrov-debug/blackfox-dwg-rust-test/releases/tag/v1.0.0). The prompt shows the exact download URL, platform, and approximate size. The archive is SHA-256 verified and cached; subsequent DWG exports reuse the verified local executable. Cancelling does not download anything or create the DWG.
 
-On the first DWG export, the extension downloads the appropriate executable
-from the project's GitHub release and installs it in a versioned `BlackFoxDWG`
-directory beside the extension.
+## Credits and licenses
 
-An internet connection is required for the initial download. Subsequent
-exports can use the verified local executable.
+- Project creator: David Mavrov
+- Development assistance: ChatGPT (OpenAI)
+- Additional ideas, including suggesting AcadRust: Gemini (Google)
+- AcadRust: Hakan AK, Mozilla Public License 2.0 (MPL-2.0); see the license and notices bundled with the converter
+- BlackFox CAD Exporter: GPL-3.0-or-later
+- ezdxf: MIT; PySide6 / Qt for Python: LGPLv3, GPLv3 or commercial licensing
 
-Converter builds are available for Windows x64, Linux x64/ARM64,
-and macOS x64/ARM64.
+## Publishing the image
 
-## Compatibility
+For a GitHub repository README, keep `blackfox_cad_exporter.png` next to this README so the Markdown image reference resolves. The IngeTrazo extension catalog may require its own metadata or submission process; bundling the PNG does not automatically update that external listing.
 
-End-to-end testing has been completed on Windows with:
+## Verification status
 
-- IngeTrazo 0.5.10.1
-- IngeTrazo 0.5.11
-
-Linux and macOS converter builds are available, but complete IngeTrazo
-integration has not yet been verified on those platforms.
-
-## Limitations
-
-- Export support depends on the geometry and features implemented in IngeTrazo.
-- Some IngeTrazo functionality is still under development.
-- Layout/paper-space export is not included in this release.
-- Not all CAD entity types or drawing properties are supported.
-
-## License
-
-GPL-3.0-or-later. See the repository's LICENSE file.
-
-## Source code
-
-https://github.com/davidsmavrov-debug/BlackFox-CAD
-
-## Third-party acknowledgments
-
-DWG conversion is implemented using [ACadSharp](https://github.com/DomCR/ACadSharp),
-an open-source .NET library developed by Albert Domenech.
-
-BlackFox DWG Converter uses ACadSharp version 3.8.35.
-
-ACadSharp is licensed under the MIT License. Its license notice is included with each converter download. Its original copyright
-and license notice are available in the upstream repository:
-https://github.com/DomCR/ACadSharp/blob/master/LICENSE
-
-BlackFox provides the IngeTrazo integration, DXF export functionality,
-conversion workflow, and automatic converter installation.
+Python syntax compilation and isolated converter-cache, offline-recovery, and download-cancellation tests passed. Live IngeTrazo 0.6.0 UI testing, actual HTTPS downloading, DWG conversion and CAD application opening are not yet verified for this build.
