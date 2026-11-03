@@ -1,6 +1,9 @@
 ﻿name: LibreDWG Prototype - Windows x64
 
 on:
+  push:
+    branches:
+      - libredwg-prototype
   workflow_dispatch:
 
 jobs:
@@ -52,3 +55,5 @@ jobs:
           name: libredwg-windows-x64-prototype
           path: artifact/
           if-no-files-found: error
+
+
