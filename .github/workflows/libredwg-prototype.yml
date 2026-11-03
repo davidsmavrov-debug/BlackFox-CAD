@@ -1,0 +1,54 @@
+﻿name: LibreDWG Prototype - Windows x64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            base-devel
+            autoconf
+            automake
+            libtool
+            texinfo
+            gperf
+            mingw-w64-x86_64-toolchain
+
+      - name: Clone pinned LibreDWG
+        run: |
+          git clone https://github.com/LibreDWG/libredwg.git libredwg
+          cd libredwg
+          git checkout 46c44598d2e321a06ba3348d868772e6ccadea0f
+
+      - name: Build LibreDWG
+        run: |
+          cd libredwg
+          sh ./autogen.sh
+          ./configure --disable-bindings --disable-docs
+          make -j2
+
+      - name: Collect converter and dependencies
+        run: |
+          mkdir -p artifact
+          cp libredwg/programs/dxf2dwg.exe artifact/
+          cp libredwg/src/.libs/*.dll artifact/ 2>/dev/null || true
+          ldd artifact/dxf2dwg.exe || true
+
+      - name: Upload experimental build
+        uses: actions/upload-artifact@v4
+        with:
+          name: libredwg-windows-x64-prototype
+          path: artifact/
+          if-no-files-found: error
