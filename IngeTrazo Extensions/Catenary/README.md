@@ -1,5 +1,7 @@
 BlackFox Catenary
 
+<img width="1200" height="750" alt="blackfox_catenary" src="https://github.com/user-attachments/assets/09b064f1-557d-4706-9ae6-e7885435a20a" />
+
 Version 1.0.0 | Free & Open Source | MIT License
 
 A free, open-source extension for IngeTrazo that creates mathematically calculated catenary curves between two specified endpoints.
