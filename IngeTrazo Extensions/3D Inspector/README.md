@@ -1,5 +1,7 @@
 BlackFox 3D Inspector
 
+<img width="1200" height="750" alt="blackfox_3d_inspector" src="https://github.com/user-attachments/assets/41bd2d23-ec1b-4f66-9f0b-a24c6fce0d42" />
+
 Version 1.0.0 | Free & Open Source | GPL-3.0-or-later
 
 A free, open-source diagnostic extension for IngeTrazo, developed as part of the BlackFox CAD project.
