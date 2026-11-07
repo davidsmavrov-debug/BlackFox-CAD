@@ -1,94 +1,57 @@
-BlackFox 3D Inspector
+<div align="center">
 
-<img width="1200" height="750" alt="blackfox_3d_inspector" src="https://github.com/user-attachments/assets/41bd2d23-ec1b-4f66-9f0b-a24c6fce0d42" />
+![BlackFox 3D Inspector logo](screenshots/blackfox_3d_inspector.png)
 
-Version 1.0.0 | Free & Open Source | GPL-3.0-or-later
+# BlackFox 3D Inspector
 
-A free, open-source diagnostic extension for IngeTrazo, developed as part of the BlackFox CAD project.
+**Version 1.1.0 · Free and open-source diagnostic extension for IngeTrazo**
 
-BlackFox 3D Inspector helps developers, engineers and curious users explore the internal structure of IngeTrazo models, investigate geometry and understand the application's Python interfaces.
+</div>
 
-Open tools. Open formats. No hostages.
+BlackFox 3D Inspector provides a **read-only report** of an IngeTrazo model's geometry and runtime APIs. It is designed for developers and CAD users investigating model data and extension compatibility.
 
-Features
+## Features
 
-3D geometry inspection — examine vertices, edges, faces and mesh topology.
+- Inspect vertices, edges, faces, groups, components, placements and layers.
+- Examine curve identifiers, edge topology, colors and material sources.
+- Inspect guides, survey/georeference points, dimensions, labels and annotations where available.
+- **New in v1.1.0:** inspect material textures and face-level attributes, including texture paths, `sw`, `sh`, `uvw`, `planar`, material assignments and back-face flags.
+- Catenary API Watch checks interfaces used by BlackFox Catenary.
+- Refresh the report and copy it to the clipboard.
+- No geometry, scene data or history is intentionally modified.
 
-Groups and components — inspect object hierarchies and associated geometry.
+Texture `uvw` and `back` values are reported as stored; the inspector does not assume their interpretation.
 
-Layers and materials — examine layer properties, colours and material information.
+## Requirements
 
-Curves and topology — investigate curve identifiers, edge connectivity and geometry attributes.
+- **IngeTrazo v0.5.11** (tested target)
+- IngeTrazo's bundled Python environment with PySide6
 
-Annotations — inspect dimensions, text objects and related style information.
+## Installation
 
-Construction guides — examine guides and construction-point data.
+1. Download `BlackFox_3D_Inspector_v1_1_0.py` from this repository or release.
+2. In IngeTrazo, choose **Extensions → Open plugins folder**.
+3. Place the `.py` file in that folder. Remove or disable any earlier BlackFox 3D Inspector plugin to avoid duplicate menus.
+4. Restart IngeTrazo.
+5. Choose **Extensions → 3D Inspector → 3D Inspector**.
 
-Survey points — investigate georeferenced points and datum information.
+Use **Refresh** to regenerate the report, or **Copy report** to copy it to the clipboard.
 
-Catenary API Watch — monitor the IngeTrazo interfaces used by BlackFox Catenary.
+## Verification
 
-Copyable diagnostic reports — generate detailed reports for troubleshooting and development.
+The v1.1.0 texture diagnostics were exercised on a textured, four-vertex, single-face group in IngeTrazo v0.5.11. The report included the material assignment, embedded texture path, full eight-value `uvw` array and other face attributes. The final source also corrects a missing `Tool` import in Catenary API Watch; that small correction should be checked in-app before publishing the release.
 
-The Inspector is read-only. It does not intentionally modify model geometry or document data.
+## Project and credits
 
-Installation
+- **Project creator:** David Mavrov
+- **Development assistance:** ChatGPT (OpenAI)
+- **BlackFox project:** [BlackFox-CAD](https://github.com/davidsmavrov-debug/BlackFox-CAD)
+- **Support:** [Ko-fi](https://ko-fi.com/davidmavrov)
 
-Download BlackFox_3D_Inspector_v1_0_0.py from this repository.
+BlackFox 3D Inspector is an independent community extension and is not an official IngeTrazo product.
 
-Launch IngeTrazo.
+## License
 
-Navigate to Extensions → Open plugins folder.
+**GNU General Public License v3.0 or later (GPL-3.0-or-later).** See [LICENSE](LICENSE).
 
-Copy the downloaded Python file into that folder.
-
-Restart IngeTrazo.
-
-Usage
-
-Navigate to:
-
-Extensions → 3D Inspector → 3D Inspector
-
-The Inspector opens a diagnostic window displaying information about the current model.
-
-Use Refresh to update the report or Copy report to copy its contents to the clipboard.
-
-Additional information is available under:
-
-Extensions → 3D Inspector → About…
-
-Compatibility
-
-Developed for IngeTrazo v0.5.11.
-
-Compatibility with other versions has not yet been verified.
-
-License
-
-Copyright © 2026 David Mavrov.
-
-Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
-
-You are free to use, study, modify and redistribute this software under the terms of the license.
-
-This is an independent community extension and is not an official IngeTrazo product.
-
-The software is provided without warranty.
-
-Credits
-
-Project creator: David Mavrov
-Development assistance: ChatGPT (OpenAI)
-
-Source Code
-
-https://github.com/davidsmavrov-debug/BlackFox-CAD
-
-Support the Project
-
-BlackFox is developed to make useful CAD and engineering tools freely available to everyone.
-
-If you find our work useful and would like to support future development:
-
-Support us at: https://ko-fi.com/davidmavrov
+Provided without warranty, to the extent permitted by applicable law.
