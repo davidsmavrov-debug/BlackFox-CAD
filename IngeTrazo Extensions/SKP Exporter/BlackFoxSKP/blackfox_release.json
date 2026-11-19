@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "repository": "davidsmavrov-debug/blackfox-skp-exporter",
+  "releases": [
+    {
+      "version": "1.0.0",
+      "abi": 1,
+      "assets": {
+        "aarch64-apple-darwin": {
+          "name": "blackfox-skp-aarch64-apple-darwin",
+          "size": 4303616,
+          "sha256": "05d601f3e3ae7e8c00c0c3ed0198346b0df98d1a1920065d2a24dde1da100354"
+        },
+        "aarch64-pc-windows-msvc": {
+          "name": "blackfox-skp-aarch64-pc-windows-msvc.exe",
+          "size": 4039680,
+          "sha256": "8fe709545fcae68f0651a9878c686c407f17dc2d5312bf0654d70f5604d86893"
+        },
+        "aarch64-unknown-linux-gnu": {
+          "name": "blackfox-skp-aarch64-unknown-linux-gnu",
+          "size": 4591704,
+          "sha256": "d5d514c05885978ba5df9676ecb40c44be3a48066cdf3569e3dbd3c8c0da54c0"
+        },
+        "x86_64-apple-darwin": {
+          "name": "blackfox-skp-x86_64-apple-darwin",
+          "size": 4613232,
+          "sha256": "51363dd618262bf4d1d8fe7703bb1e15b1de1e1cf250f804904f62c70da187e6"
+        },
+        "x86_64-pc-windows-msvc": {
+          "name": "blackfox-skp-x86_64-pc-windows-msvc.exe",
+          "size": 5273088,
+          "sha256": "f583605d0777f1a55db5673fecc79dc4c2020ab5e26ff55c18deb9a8d575be79"
+        },
+        "x86_64-unknown-linux-gnu": {
+          "name": "blackfox-skp-x86_64-unknown-linux-gnu",
+          "size": 5082120,
+          "sha256": "c60a64f5348ed1bcd29d4f694dfe360714e8d9610acc2469df86ca6a1f13f5f1"
+        }
+      }
+    }
+  ]
+}
