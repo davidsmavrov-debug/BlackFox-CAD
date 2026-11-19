@@ -1,16 +1,18 @@
 # BlackFox SKP Exporter v1.0.0
 
-Free and open-source IngeTrazo extension for opening, importing, and exporting SketchUp SKP files.
+![BlackFox SKP Exporter](blackfox_skp_exporter.png)
+
+Free and open-source IngeTrazo extension for opening, importing, and exporting SketchUp SKP models.
 
 ## Install
 
-Download [BlackFoxSKP_1.0.0.zip](https://github.com/davidsmavrov-debug/BlackFox-CAD/releases/download/skp-exporter-v1.0.0/BlackFoxSKP_1.0.0.zip). Open IngeTrazo's **Extensions > Open plugins folder**, extract the `BlackFoxSKP` folder there, and restart IngeTrazo. On Windows the folder is `%APPDATA%\ingetrazo\plugins\BlackFoxSKP`.
-
-Open, import, or export a model from **Extensions > SKP Exporter**.
+Download [BlackFox_SKP_EXPORTER_1.0.0.py](https://github.com/davidsmavrov-debug/BlackFox-CAD/releases/download/skp-exporter-v1.0.0/BlackFox_SKP_EXPORTER_1.0.0.py). Place it directly in IngeTrazo's **Extensions > Open plugins folder**, then restart IngeTrazo. If you installed the earlier ZIP, move its `BlackFoxSKP` package out of the plugins folder before installing the standalone file.
 
 ## SKP converter
 
-The first SKP operation asks before downloading the matching [BlackFox converter v1.0.0](https://github.com/davidsmavrov-debug/blackfox-skp-exporter/releases/tag/v1.0.0). The prompt shows the download URL, platform, size, and destination. BlackFox verifies the executable's size, SHA-256, and architecture before installing it. Later operations reuse the verified copy.
+Choose **Open SKP**, **Import SKP**, **Export SKP**, or **Export Selected** from **Extensions > SKP Exporter**. If the converter is missing, BlackFox asks permission to download the matching [converter v1.0.0](https://github.com/davidsmavrov-debug/blackfox-skp-exporter/releases/tag/v1.0.0). The prompt shows the platform, version, download size, and destination. BlackFox verifies the executable's size, SHA-256, and architecture before installation and reuses the verified copy.
+
+On Windows the executable goes in `%APPDATA%\ingetrazo\plugins\BlackFoxSKP\BlackFoxSKP.exe`. Canceling leaves the converter uninstalled and lets you retry on the next SKP command.
 
 ## Credits and licenses
 
@@ -18,10 +20,10 @@ The first SKP operation asks before downloading the matching [BlackFox converter
 - Development assistance: ChatGPT (OpenAI)
 - [skpwright](https://github.com/hew3d/skpwright): Kurt Granroth and contributors, GPL-3.0-only
 - BlackFox SKP Exporter: GPL-3.0-only
-- Bundled truststore: MIT
+- Embedded truststore Windows backend: MIT
 
 ## Verification status
 
-The extension and first-run download were tested on Windows. Native converter smoke tests passed on Windows, Linux, and macOS, on x86-64 and ARM64. The file-dialog tests also passed on all three operating systems.
+The standalone extension's first-run download and SKP command prompts were verified on Windows. Native converter smoke tests passed on Windows, Linux, and macOS on x86-64 and ARM64. The file-dialog tests also passed on all three operating systems.
 
-Some nested SKP files use an import path that preserves hierarchy and geometry with limited support for materials, annotations, sections, and cameras.
+The earlier ZIP is retained as a release asset. Use the standalone Python file for a new installation.
