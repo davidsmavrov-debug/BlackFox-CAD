@@ -27,3 +27,7 @@ On Windows the executable goes in `%APPDATA%\ingetrazo\plugins\BlackFoxSKP\Black
 The standalone extension's first-run download and SKP command prompts were verified on Windows. Native converter smoke tests passed on Windows, Linux, and macOS on x86-64 and ARM64. The file-dialog tests also passed on all three operating systems.
 
 The earlier ZIP is retained as a release asset. Use the standalone Python file for a new installation.
+
+## Support
+
+[Support David Mavrov on Ko-fi](https://ko-fi.com/davidmavrov)
