@@ -28,6 +28,13 @@ The standalone extension's first-run download and SKP command prompts were verif
 
 The earlier ZIP is retained as a release asset. Use the standalone Python file for a new installation.
 
+## Known limitations
+
+- **SketchUp versions.** Basic geometry fixtures passed for all 21 offered versions, covering SketchUp 3–8 and 2013–2027. The 2021–2027 export options use a shared SKP container. Compatibility with each corresponding SketchUp application remains unverified.
+- **Round-trip fidelity.** Some nested models use a hierarchy import path that preserves geometry and placements with limited support for materials, annotations, section settings, and cameras. BlackFox approximates texture mappings that IngeTrazo cannot represent exactly.
+- **IFC classifications.** The IFC2x3 and IFC4 SKP benchmarks preserved their classification metadata through export and re-import. Other schemas, class combinations, and authoring workflows have limited verification.
+- **Large models.** IngeTrazo stays responsive while the converter reads the file. Building a very large scene can still briefly pause the interface.
+
 ## Support
 
 [Support David Mavrov on Ko-fi](https://ko-fi.com/davidmavrov)
