@@ -2,12 +2,13 @@ import math
 # SPDX-License-Identifier: GPL-3.0-only
 """Import and export SketchUp SKP models in IngeTrazo."""
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 from pathlib import Path
 import json
 import subprocess
 import os
+import re
 import sys
 import tempfile
 import traceback
@@ -22,27 +23,27 @@ from PySide6.QtGui import QVector3D, QMatrix4x4
 # 2021-2027 share a container family; actual output selection must be
 # checked against the local Rust engine before wiring these filters.
 SKP_FILTERS = [
-    "SketchUp Version 2027 (*.skp)",
-    "SketchUp Version 2026 (*.skp)",
-    "SketchUp Version 2025 (*.skp)",
-    "SketchUp Version 2024 (*.skp)",
-    "SketchUp Version 2023 (*.skp)",
-    "SketchUp Version 2022 (*.skp)",
-    "SketchUp Version 2021 (*.skp)",
-    "SketchUp Version 2020 (*.skp)",
-    "SketchUp Version 2019 (*.skp)",
-    "SketchUp Version 2018 (*.skp)",
-    "SketchUp Version 2017 (*.skp)",
-    "SketchUp Version 2016 (*.skp)",
-    "SketchUp Version 2015 (*.skp)",
-    "SketchUp Version 2014 (*.skp)",
-    "SketchUp Version 2013 (*.skp)",
-    "SketchUp Version 8 (*.skp)",
-    "SketchUp Version 7 (*.skp)",
-    "SketchUp Version 6 (*.skp)",
-    "SketchUp Version 5 (*.skp)",
-    "SketchUp Version 4 (*.skp)",
-    "SketchUp Version 3 (*.skp)",
+    "SKP 2027 (*.skp)",
+    "SKP 2026 (*.skp)",
+    "SKP 2025 (*.skp)",
+    "SKP 2024 (*.skp)",
+    "SKP 2023 (*.skp)",
+    "SKP 2022 (*.skp)",
+    "SKP 2021 (*.skp)",
+    "SKP 2020 (*.skp)",
+    "SKP 2019 (*.skp)",
+    "SKP 2018 (*.skp)",
+    "SKP 2017 (*.skp)",
+    "SKP 2016 (*.skp)",
+    "SKP 2015 (*.skp)",
+    "SKP 2014 (*.skp)",
+    "SKP 2013 (*.skp)",
+    "SKP 8 (*.skp)",
+    "SKP 7 (*.skp)",
+    "SKP 6 (*.skp)",
+    "SKP 5 (*.skp)",
+    "SKP 4 (*.skp)",
+    "SKP 3 (*.skp)",
 ]
 
 
@@ -161,9 +162,7 @@ class _BlackFoxDownloadCancelled(Exception):
     pass
 
 
-def _blackfox_release_candidates(package, target, name, manifest):
-    import re
-
+def _blackfox_release_candidates(directory, target, name, manifest):
     repository = _BLACKFOX_RELEASE_REPOSITORY
     if not repository:
         raise RuntimeError("The official BlackFox SKP release repository has not been configured.")
@@ -199,13 +198,13 @@ def _blackfox_release_candidates(package, target, name, manifest):
         if (type(size) is not int or not 0 < size <= _BLACKFOX_MAX_DOWNLOAD
                 or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
             raise RuntimeError("Invalid BlackFox SKP asset size or SHA-256.")
-        directory = package / "BlackFoxSKP"
-        if directory.resolve() != directory:
-            raise RuntimeError(f"BlackFox SKP installation directory contains a redirect: {directory}")
+        release_dir = directory / version / target
+        if release_dir.resolve() != release_dir:
+            raise RuntimeError(f"BlackFox SKP installation directory contains a redirect: {release_dir}")
         candidates.append({
             "version": version, "size": size, "sha256": digest,
             "url": f"https://github.com/{repository}/releases/download/v{version}/{expected_filename}",
-            "destination": directory / name,
+            "destination": release_dir / name,
         })
     if not candidates:
         raise RuntimeError(f"No compatible BlackFox SKP release for {target}.")
@@ -327,7 +326,7 @@ def _blackfox_download_release(release, output):
         raise RuntimeError("BlackFox SKP download is incomplete.")
 
 
-def _blackfox_install_release(release, arch):
+def _blackfox_install_release(release, arch, *, legacy=None):
     destination = release["destination"]
     directory = destination.parent
     if directory.resolve() != directory:
@@ -337,14 +336,30 @@ def _blackfox_install_release(release, arch):
     staged = Path(path)
     try:
         with os.fdopen(fd, "wb") as output:
-            _blackfox_download_release(release, output)
+            if legacy is None:
+                _blackfox_download_release(release, output)
+            else:
+                # Bound the copy even if the legacy file changes mid-migration.
+                with legacy.open("rb") as original:
+                    remaining = release["size"] + 1
+                    while remaining:
+                        chunk = original.read(min(remaining, 1024 * 1024))
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        remaining -= len(chunk)
             output.flush()
             os.fsync(output.fileno())
         if not _blackfox_verified_file(staged, release, arch, require_executable=False):
             raise RuntimeError("BlackFox SKP converter failed hash, size, or architecture verification.")
         if sys.platform != "win32":
             staged.chmod(0o755)
-        os.replace(staged, destination)
+        try:
+            os.replace(staged, destination)
+        except OSError:
+            # Another IngeTrazo process may have installed and opened this build.
+            if not _blackfox_verified_file(destination, release, arch):
+                raise
     finally:
         staged.unlink(missing_ok=True)
     return destination
@@ -360,37 +375,41 @@ def _blackfox_packaged_converter(package, target, name, arch, parent, prompt):
         manifest = json.loads(payload)
     except (UnicodeError, ValueError) as exc:
         raise RuntimeError("BlackFox SKP release manifest is not valid JSON.") from exc
-    candidates = _blackfox_release_candidates(package, target, name, manifest)
+    from core.extensions import user_plugins_dir
+
+    plugins = user_plugins_dir()
+    directory = plugins.parent.resolve() / "extension-data" / "blackfox_skp_exporter" / "bin"
+    if directory.is_relative_to(plugins.resolve()):
+        raise RuntimeError("BlackFox SKP converter storage must be outside the plugins directory.")
+    candidates = _blackfox_release_candidates(directory, target, name, manifest)
+    for release in candidates:
+        if _blackfox_verified_file(release["destination"], release, arch):
+            return release["destination"]
+
+    for release in candidates:
+        legacy_paths = (
+            package / "BlackFoxSKP" / name,
+            plugins / "blackfox_skp_exporter" / "BlackFoxSKP" / name,
+            plugins / "BlackFoxSKP" / name,
+            plugins / "BlackFoxSKP" / "bin" / release["version"] / target / name,
+        )
+        for legacy in dict.fromkeys(legacy_paths):
+            if _blackfox_verified_file(legacy, release, arch, require_executable=False):
+                return _blackfox_install_release(release, arch, legacy=legacy)
+
     preferred = candidates[0]
-    if _blackfox_verified_file(preferred["destination"], preferred, arch):
-        return preferred["destination"]
-    fallback = next((release["destination"] for release in candidates[1:]
-                     if _blackfox_verified_file(release["destination"], release, arch)), None)
-    key = (package, target, preferred["version"])
+    key = preferred["destination"]
     if not prompt:
-        if fallback is not None:
-            return fallback
         raise RuntimeError(f"No verified BlackFox SKP converter is installed for {target}.")
     if key in _BLACKFOX_ASKED_FOR_RELEASE:
-        if fallback is not None:
-            return fallback
         raise _BlackFoxDownloadCancelled()
     _BLACKFOX_ASKED_FOR_RELEASE.add(key)
     try:
         if not _blackfox_confirm_download(parent, target, preferred):
-            if fallback is not None:
-                return fallback
             raise _BlackFoxDownloadCancelled()
-        try:
-            return _blackfox_install_release(preferred, arch)
-        except Exception as exc:
-            if fallback is not None:
-                QMessageBox.warning(
-                    parent, "BlackFox SKP converter",
-                    f"Could not install the replacement converter. The verified previous version will be used.\n\n{exc}",
-                )
-                return fallback
-            raise
+        if _blackfox_verified_file(preferred["destination"], preferred, arch):
+            return preferred["destination"]
+        return _blackfox_install_release(preferred, arch)
     finally:
         _BLACKFOX_ASKED_FOR_RELEASE.discard(key)
 
@@ -1067,7 +1086,7 @@ def _restore_native_sections(scene, converted, native=None):
         a,b,c,d = [float(v) for v in coeffs]
         mag2 = a*a + b*b + c*c
         if not all(math.isfinite(v) for v in (a,b,c,d)) or mag2 < 1e-20:
-            raise ValueError("Invalid SketchUp section plane")
+            raise ValueError("Invalid SKP section plane")
         # Source offset d is in inches; point is in metres.
         factor = -d * 0.0254 / mag2
         px,py,pz = a*factor,b*factor,c*factor
@@ -1119,7 +1138,7 @@ def _restore_native_sections(scene, converted, native=None):
             for source in sections:
                 coeffs = source.get("plane")
                 if not isinstance(coeffs, list) or len(coeffs) != 4:
-                    raise ValueError("Invalid SketchUp section plane")
+                    raise ValueError("Invalid SKP section plane")
                 point, normal = world_plane(coeffs, matrix)
                 section = SectionPlane(
                     point, normal,
@@ -1391,7 +1410,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                     or not 1 <= back_slot <= len(materials)
                 ):
                     raise ValueError(
-                        "Invalid SketchUp back material slot: "
+                        "Invalid SKP back material slot: "
                         + repr(back_slot)
                     )
 
@@ -1401,7 +1420,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                     "solid", "textured"
                 ):
                     raise ValueError(
-                        "Unsupported SketchUp back material kind: "
+                        "Unsupported SKP back material kind: "
                         + repr(back_material.get("kind"))
                     )
 
@@ -1426,7 +1445,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
 
                     if not isinstance(texture_info, dict):
                         raise ValueError(
-                            "Missing SketchUp back texture"
+                            "Missing SKP back texture"
                         )
 
                     if (
@@ -1439,7 +1458,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                         )
                     ):
                         raise ValueError(
-                            "Invalid SketchUp back UVW"
+                            "Invalid SKP back UVW"
                         )
 
                     width = float(texture_info["width_m"])
@@ -1459,7 +1478,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
 
                     if not source_path.is_file():
                         raise FileNotFoundError(
-                            "SketchUp back texture missing: "
+                            "SKP back texture missing: "
                             + str(source_path)
                         )
 
@@ -1497,7 +1516,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                 materials = converted.get("source_materials", [])
                 if type(slot) is not int or not 1 <= slot <= len(materials):
                     raise ValueError(
-                        "Invalid SketchUp front material slot: " + repr(slot)
+                        "Invalid SKP front material slot: " + repr(slot)
                     )
 
                 source_material = materials[slot - 1]
@@ -1510,16 +1529,16 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                         or any(type(c) is not int or not 0 <= c <= 255 for c in rgba)
                     ):
                         raise ValueError(
-                            "Invalid SketchUp solid material RGBA: " + repr(rgba)
+                            "Invalid SKP solid material RGBA: " + repr(rgba)
                         )
 
                     opacity = source_material.get("opacity", rgba[3] / 255.0)
                     if not isinstance(opacity, (int, float)) or not 0 <= opacity <= 1:
                         raise ValueError(
-                            "Invalid SketchUp material opacity: " + repr(opacity)
+                            "Invalid SKP material opacity: " + repr(opacity)
                         )
 
-                    material_name = source_material.get("name") or "SketchUp Material"
+                    material_name = source_material.get("name") or "SKP Material"
 
                     # Register native materials once and reuse them.
                     material = scene.materials.get(material_name)
@@ -1539,13 +1558,13 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
 
                     if not isinstance(texture_info, dict):
                         raise ValueError(
-                            "Missing SketchUp front texture: " + repr(slot)
+                            "Missing SKP front texture: " + repr(slot)
                         )
 
                     source_path = Path(texture_info["file"])
                     if not source_path.is_file():
                         raise FileNotFoundError(
-                            "SketchUp texture missing: " + str(source_path)
+                            "SKP texture missing: " + str(source_path)
                         )
 
                     if (
@@ -1558,7 +1577,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                         )
                     ):
                         raise ValueError(
-                            "Invalid SketchUp front UVW: " + repr(uvw)
+                            "Invalid SKP front UVW: " + repr(uvw)
                         )
 
                     width = float(texture_info["width_m"])
@@ -1571,11 +1590,11 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                         or height <= 0
                     ):
                         raise ValueError(
-                            "Invalid SketchUp texture dimensions"
+                            "Invalid SKP texture dimensions"
                         )
 
                     material_name = (
-                        source_material.get("name") or "SketchUp Texture"
+                        source_material.get("name") or "SKP Texture"
                     )
 
                     cached_path = texture_cache.get(str(source_path))
@@ -1616,7 +1635,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
             # The back side has its own independent material, UVs and opacity.
             if back_record is not None:
                 back_material = back_record["back_material"]
-                back_name = back_material.get("name") or "SketchUp Back Material"
+                back_name = back_material.get("name") or "SKP Back Material"
                 back_kind = back_material["kind"]
                 back_rgba = back_material.get("rgba")
                 back_opacity = back_material.get("opacity")
@@ -1627,7 +1646,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                         or len(back_rgba) != 4
                         or any(type(c) is not int or not 0 <= c <= 255 for c in back_rgba)
                     ):
-                        raise ValueError("Invalid SketchUp back RGBA: " + repr(back_rgba))
+                        raise ValueError("Invalid SKP back RGBA: " + repr(back_rgba))
 
                 if back_opacity is None:
                     back_opacity = (back_rgba[3] / 255.0) if back_rgba is not None else 1.0
@@ -1636,11 +1655,11 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
                     or not math.isfinite(back_opacity)
                     or not 0.0 <= back_opacity <= 1.0
                 ):
-                    raise ValueError("Invalid SketchUp back opacity: " + repr(back_opacity))
+                    raise ValueError("Invalid SKP back opacity: " + repr(back_opacity))
 
                 if back_kind == "solid":
                     if back_rgba is None:
-                        raise ValueError("Solid SketchUp back material missing RGBA")
+                        raise ValueError("Solid SKP back material missing RGBA")
                     back_attrs = {
                         "color": [float(c) / 255.0 for c in back_rgba[:3]],
                         "mat": back_name,
@@ -1837,7 +1856,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
         locked = body.get("locked")
         if type(locked) is not bool:
             raise ValueError(
-                "Missing or invalid native SketchUp group lock state: "
+                "Missing or invalid native SKP group lock state: "
                 + repr(body.get("source_instance_pid"))
             )
         group.locked = locked
@@ -1885,7 +1904,7 @@ def _populate_scene(scene, converted, native=None, viewport_size=(1280, 720)):
         locked = instance.get("locked")
         if type(locked) is not bool:
             raise ValueError(
-                "Missing or invalid native SketchUp component lock state: "
+                "Missing or invalid native SKP component lock state: "
                 + repr(instance.get("source_instance_pid"))
             )
         group.locked = locked
@@ -1947,10 +1966,10 @@ def _source_display_units(converted):
         raise ValueError("SKP source units missing; cannot open with source units")
     code = source.get("length_unit")
     if type(code) is not int or code not in _SKP_LENGTH_UNITS:
-        raise ValueError("Unsupported SketchUp length unit: " + repr(code))
+        raise ValueError("Unsupported SKP length unit: " + repr(code))
     precision = source.get("length_precision", 2)
     if type(precision) is not int or not 0 <= precision <= 12:
-        raise ValueError("Invalid SketchUp length precision: " + repr(precision))
+        raise ValueError("Invalid SKP length precision: " + repr(precision))
     return {"length": _SKP_LENGTH_UNITS[code], "precision": precision}
 
 
@@ -2148,14 +2167,14 @@ def _restore_active_layer(scene, converted):
                 "active_layer": None,
                 "active_layer_reason": "Source active layer was not provided"}
     if type(source_index) is not int or not 0 <= source_index < len(layers):
-        raise ValueError("Invalid SketchUp active layer index: " + repr(source_index))
+        raise ValueError("Invalid SKP active layer index: " + repr(source_index))
 
     source = layers[source_index]
     if not isinstance(source, dict):
-        raise ValueError("Invalid SketchUp active layer catalogue entry")
+        raise ValueError("Invalid SKP active layer catalogue entry")
     name = source.get("name")
     if not isinstance(name, str) or not name.strip():
-        raise ValueError("SketchUp active layer has no valid name")
+        raise ValueError("SKP active layer has no valid name")
 
     # SketchUp's default tag maps to IngeTrazo's native default layer.
     if name in ("Layer0", "Untagged", "Layer 0"):
@@ -2163,7 +2182,7 @@ def _restore_active_layer(scene, converted):
         return {"active_layer_restored": True, "active_layer": "Layer 0"}
 
     if scene.layer(name) is None:
-        raise ValueError("SketchUp active layer was not created in IngeTrazo: " + name)
+        raise ValueError("SKP active layer was not created in IngeTrazo: " + name)
     scene.active_layer = name
     return {"active_layer_restored": True, "active_layer": name}
 
@@ -2522,7 +2541,7 @@ def _run_skp_import(command, parent):
     from PySide6.QtCore import QEventLoop, QTimer
     from PySide6.QtWidgets import QProgressDialog
 
-    progress = QProgressDialog("Reading SketchUp file...", "", 0, 0, parent)
+    progress = QProgressDialog("Reading SKP file...", "", 0, 0, parent)
     progress.setWindowTitle("BlackFox SKP")
     progress.setWindowModality(Qt.ApplicationModal)
     progress.setCancelButton(None)
@@ -2558,7 +2577,7 @@ def _import_skp(app, open_mode=False):
     try:
         engine, _ = _blackfox_dependencies(parent, prompt=True)
         filename, _ = QFileDialog.getOpenFileName(
-            parent, "Open SKP" if open_mode else "Import SKP", "", "SketchUp Models (*.skp)"
+            parent, "Open SKP" if open_mode else "Import SKP", "", "SKP Models (*.skp)"
         )
         if not filename:
             return
@@ -2574,7 +2593,8 @@ def _import_skp(app, open_mode=False):
             command = [str(engine), "import-assets", str(filename), str(native), str(assets)]
             result = _run_skp_import(command, parent)
             if result.returncode:
-                raise RuntimeError("BlackFox import-assets failed:\n" + (result.stderr or result.stdout))
+                detail = re.sub(r"(?i)sketchup", "SKP", result.stderr or result.stdout)
+                raise RuntimeError("BlackFox import-assets failed:\n" + detail)
             with native.open('r', encoding='utf-8-sig') as handle:
                 early_native = json.load(handle)
             # Preserve the existing Phase 2D import for models supported by
@@ -2678,7 +2698,7 @@ def _import_skp(app, open_mode=False):
                     # Phase 2N: retain original SketchUp attribute dictionaries.
                     source_dictionaries = converted.get("source_dictionaries", [])
                     if not isinstance(source_dictionaries, list):
-                        raise ValueError("Invalid SketchUp dictionary collection")
+                        raise ValueError("Invalid SKP dictionary collection")
                     dictionary_key = "blackfox_skp_dictionaries_v1"
                     if dictionary_key in scene.plugin_data:
                         raise ValueError("Existing BlackFox dictionary metadata would be overwritten")
@@ -2771,7 +2791,7 @@ def _import_skp(app, open_mode=False):
             f"Layers in scene: {result_stats['layers_total']} "
             f"(new: {result_stats['layers_added']}, "
             f"colored: {result_stats['layers_colored']})\n"
-            + (f"Active SketchUp tag: {result_stats.get('active_layer', 'not restored')}\n"
+            + (f"Active SKP tag: {result_stats.get('active_layer', 'not restored')}\n"
                if open_mode else "Destination active tag: preserved\n") +
             f"Curves: {result_stats['curves']}\n"
             f"Native back-face materials: {result_stats['back_faces_native']}\n"
@@ -2784,7 +2804,7 @@ def _import_skp(app, open_mode=False):
             f"Annotations deferred from native scene: {result_stats.get('annotations_skipped', 0)}\n\n"
             "D4N61V conservative annotations; "
             "saved scenes retained. "
-            "Native SketchUp group/component lock states restored. "
+            "Native SKP group/component lock states restored. "
             "Screen-space text deferred; export integration remains pending."
         )
     except _BlackFoxDownloadCancelled:
@@ -3527,7 +3547,7 @@ def _export_skp(app, selected_only=False):
                 return
 
         version_filter = dialog.selectedNameFilter()
-        version = version_filter.split("Version ", 1)[1].split(" ", 1)[0]
+        version = version_filter.split()[1]
 
 
         stage_dir = destination.parent if overwrite else None
@@ -3558,7 +3578,7 @@ def _export_skp(app, selected_only=False):
             if result.returncode != 0:
                 raise RuntimeError(
                     f"BlackFox engine returned {result.returncode}:\n"
-                    f"{result.stdout}\n{result.stderr}"
+                    + re.sub(r"(?i)sketchup", "SKP", f"{result.stdout}\n{result.stderr}")
                 )
 
             if not output.is_file():
@@ -3570,7 +3590,7 @@ def _export_skp(app, selected_only=False):
             parent,
             "BlackFox SKP - Export completed",
             f"SKP created successfully:\n{destination}\n\n"
-            f"SketchUp version: {version}\n"
+            f"SKP version: {version}\n"
             f"Root meshes: {len(model['loose_geometry'])}\n"
             f"Group and component placements: {len(model['component_instances'])}"
         )
@@ -3597,7 +3617,7 @@ def _about(parent):
         <h2>BlackFox SKP Exporter</h2>
         <p>Version {__version__}</p>
         <p>A free and open-source IngeTrazo extension for importing and
-        exporting SketchUp SKP models.</p>
+        exporting SKP models.</p>
         <p><b>Project creator:</b> David Mavrov<br>
         <b>Development assistance:</b> ChatGPT (OpenAI)<br>
         <b>SKP format library:</b> skpwright by hew3d and contributors.<br>
