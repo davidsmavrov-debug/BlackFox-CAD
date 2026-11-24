@@ -14,7 +14,7 @@ Use **3D CAD Exporter > Import 3D CAD** to import DXF, DWG, OBJ, STL, COLLADA,
 FBX, glTF or GLB into the current drawing. Confirm the suggested units in
 IngeTrazo's standard import dialog. Undo removes the import in one step.
 
-Use IngeTrazo's native **Point** tool to place guide points by clicking
+Use IngeTrazo's native **Tools > Guide Point** to place points by clicking
 or by entering `x;y;z`. The exporter writes model guide points as DXF
 `POINT` entities. CAD points in model space import as native guide points.
 

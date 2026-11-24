@@ -1438,7 +1438,7 @@ def _show_about(parent):
         <p><b>Version 1.0.1</b> &middot; November 2026</p>
         <p>A free and open-source extension for exporting 3D geometry,
         dimensions, text and numbered survey points from IngeTrazo to DXF and DWG.</p>
-        <p>Imports DXF, DWG and mesh files. Use IngeTrazo's native Point tool
+        <p>Imports DXF, DWG and mesh files. Use IngeTrazo's native Guide Point tool
         to place guide points for CAD export.</p>
         <p><b>Project creator:</b> David Mavrov<br>
         <b>Development assistance:</b> ChatGPT (OpenAI)<br>

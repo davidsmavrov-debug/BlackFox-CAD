@@ -22,7 +22,6 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QVector3D
 from PySide6.QtWidgets import QApplication, QMenu
 from core._native import engine
-from tools.guide_point import GuidePointTool
 from views.main_window import MainWindow
 
 source = Path(__file__).resolve().parents[1] / "BlackFox_CAD_Exporter_v1_0_1.py"
@@ -43,7 +42,8 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
     assert [a.text() for a in menu.actions() if not a.isSeparator()] == [
         "Export 3D CAD", "Export 3D CAD (Selected Geometry)", "Import 3D CAD", "About…"
     ]
-    guide = GuidePointTool()
+    window._tool_actions["guide_point"].trigger()
+    guide = window._tools["guide_point"]
     assert guide.on_value(window.viewport, (1, 2, 3))
     guide.on_click(SimpleNamespace(viewport=window.viewport, world=QVector3D(4, 5, 6)))
     assert window.viewport.history.undo()
