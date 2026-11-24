@@ -8,29 +8,29 @@ from __future__ import annotations
 import traceback
 import math
 from collections import Counter, defaultdict
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QDialog, QVBoxLayout, QFormLayout, QDoubleSpinBox, QDialogButtonBox, QCheckBox, QLabel, QPushButton, QHBoxLayout, QWidget, QComboBox, QGroupBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QDialog, QVBoxLayout, QDialogButtonBox, QCheckBox, QLabel, QPushButton, QHBoxLayout, QWidget, QComboBox, QGroupBox
 from PySide6.QtCore import QSettings
-from tools.base import Tool
 
 
 # BlackFox DWG: consent-based, SHA-256 verified Rust converter installer.
 import hashlib
 import os
-import platform
-import shutil
-import ssl
+import io
+import json
+import re
+import sys
 import subprocess
 import tempfile
-import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "v1.0.0"  # Rust converter release (exporter version is 1.0.1)
-RELEASE_URL = (
-    "https://github.com/davidsmavrov-debug/blackfox-dwg-rust-test"
-    "/releases/download/v1.0.0/"
-)
+CONVERTER_REPOSITORY = "davidsmavrov-debug/blackfox-dwg-converter"
+LEGACY_VERSION = "1.0.0"
+MAX_ARCHIVE = 128 * 1024 * 1024
+# Set together by the release packaging script from the approved build artifacts.
+RELEASE_MANIFEST = b""
+RELEASE_MANIFEST_SHA256 = ""
 
 # SHA-256 of the *published ZIP archives*, independently verified at packaging.
 CHECKSUMS = {
@@ -62,65 +62,134 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
-def _platform_id():
-    system = platform.system()
-    machine = platform.machine().lower()
-    arch = {
-        "amd64": "x86_64", "x86_64": "x86_64",
-        "arm64": "aarch64", "aarch64": "aarch64",
-    }.get(machine)
+_BLACKFOX_ARCH_NAMES = {
+    "amd64": "x86_64", "x86_64": "x86_64",
+    "arm64": "aarch64", "aarch64": "aarch64",
+}
+_BLACKFOX_SYSTEMS = {
+    "win32": ("pc-windows-msvc", "BlackFoxDWG.exe"),
+    "linux": ("unknown-linux-gnu", "BlackFoxDWG"),
+    "darwin": ("apple-darwin", "BlackFoxDWG"),
+}
+_BLACKFOX_PE_MACHINES = {0x8664: "x86_64", 0xAA64: "aarch64"}
+
+
+def _blackfox_native_machine(system):
+    import ctypes
+    import platform
+
+    if system == "win32":
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        native_query = getattr(kernel, "IsWow64Process2", None)
+        if native_query is not None:
+            kernel.GetCurrentProcess.restype = ctypes.c_void_p
+            native_query.argtypes = [
+                ctypes.c_void_p, ctypes.POINTER(ctypes.c_ushort),
+                ctypes.POINTER(ctypes.c_ushort),
+            ]
+            native_query.restype = ctypes.c_int
+            process_machine, native_machine = ctypes.c_ushort(), ctypes.c_ushort()
+            if not native_query(kernel.GetCurrentProcess(), ctypes.byref(process_machine),
+                                ctypes.byref(native_machine)):
+                raise OSError(f"Cannot detect native Windows architecture (error {ctypes.get_last_error()}).")
+            return _BLACKFOX_PE_MACHINES.get(native_machine.value, hex(native_machine.value))
+    elif system == "darwin":
+        import errno
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        query = libc.sysctlbyname
+        query.argtypes = [
+            ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_void_p, ctypes.c_size_t,
+        ]
+        query.restype = ctypes.c_int
+        arm = ctypes.c_int()
+        size = ctypes.c_size_t(ctypes.sizeof(arm))
+        if query(b"hw.optional.arm64", ctypes.byref(arm), ctypes.byref(size), None, 0) == 0:
+            if arm.value:
+                return "aarch64"  # Also applies to an x86-64 process under Rosetta.
+        elif ctypes.get_errno() != errno.ENOENT:
+            raise OSError(f"Cannot detect native macOS architecture (error {ctypes.get_errno()}).")
+    return platform.machine()
+
+
+def _blackfox_platform(system=None, machine=None):
+    system = sys.platform if system is None else system
+    if system not in _BLACKFOX_SYSTEMS:
+        raise RuntimeError(f"BlackFox CAD does not support operating system {system!r}.")
+    machine = _blackfox_native_machine(system) if machine is None else machine
+    arch = _BLACKFOX_ARCH_NAMES.get(machine.lower())
     if arch is None:
-        raise RuntimeError("Unsupported CPU architecture: " + machine)
-    target = {
-        "Windows": "pc-windows-msvc",
-        "Linux": "unknown-linux-gnu",
-        "Darwin": "apple-darwin",
-    }.get(system)
-    if target is None:
-        raise RuntimeError("Unsupported operating system: " + system)
-    rid = arch + "-" + target
-    if rid not in CHECKSUMS:
-        raise RuntimeError("No BlackFox DWG converter for " + rid)
-    return rid
+        raise RuntimeError(f"BlackFox CAD does not support CPU architecture {machine!r} on {system}.")
+    suffix, name = _BLACKFOX_SYSTEMS[system]
+    return f"{arch}-{suffix}", name, arch
 
 
-def _verified_archive(archive_path, rid):
-    return (archive_path.is_file()
-            and _sha256_file(archive_path) == CHECKSUMS[rid])
-
-
-def _cached_converter(directory, archive_path, filename, rid):
-    """Check the executable and notices against the signed-off ZIP checksum."""
-    executable = directory / filename
-    if not executable.is_file() or not _verified_archive(archive_path, rid):
-        return None
-    try:
-        with zipfile.ZipFile(archive_path) as archive:
-            if set(archive.namelist()) != {filename, *CONVERTER_MEMBERS}:
+def _blackfox_binary_architecture(path, system):
+    """Inspect a native executable header without running the file."""
+    with path.open("rb") as stream:
+        header = stream.read(64)
+        if len(header) < 64:
+            return None
+        if system == "win32" and header[:2] == b"MZ":
+            offset = int.from_bytes(header[60:64], "little")
+            if offset < 64:
                 return None
-            for member in (filename, *CONVERTER_MEMBERS):
-                destination = directory / member
-                if not destination.is_file():
-                    return None
-                if hashlib.sha256(archive.read(member)).hexdigest() != _sha256_file(destination):
-                    return None
-    except (OSError, zipfile.BadZipFile):
-        return None
-    return executable
+            stream.seek(offset)
+            pe = stream.read(26)
+            if (len(pe) == 26 and pe[:4] == b"PE\0\0"
+                    and pe[24:26] == b"\x0b\x02"):
+                flags = int.from_bytes(pe[22:24], "little")
+                if flags & 0x0002 and not flags & 0x2000:  # Executable, not DLL.
+                    return _BLACKFOX_PE_MACHINES.get(int.from_bytes(pe[4:6], "little"))
+        elif system == "linux" and header[:6] == b"\x7fELF\x02\x01":
+            kind = int.from_bytes(header[16:18], "little")
+            if kind in (2, 3):  # ET_EXEC or position-independent ET_DYN.
+                return {62: "x86_64", 183: "aarch64"}.get(int.from_bytes(header[18:20], "little"))
+        elif system == "darwin" and header[:4] == b"\xcf\xfa\xed\xfe":
+            if int.from_bytes(header[12:16], "little") == 2:  # MH_EXECUTE.
+                return {0x01000007: "x86_64", 0x0100000C: "aarch64"}.get(
+                    int.from_bytes(header[4:8], "little"))
+    return None
 
 
-def _confirm_converter_download(parent, url, rid):
-    size_mb = ARCHIVE_SIZES[rid] / (1024 * 1024)
+def _release_metadata(rid, require_import):
+    if RELEASE_MANIFEST:
+        if hashlib.sha256(RELEASE_MANIFEST).hexdigest() != RELEASE_MANIFEST_SHA256:
+            raise RuntimeError("BlackFox CAD release manifest failed SHA-256 verification.")
+        manifest = json.loads(RELEASE_MANIFEST)
+        version = manifest["version"]
+        if (manifest["schema"] != 1 or manifest["repository"] != CONVERTER_REPOSITORY
+                or manifest["abi"] != 2
+                or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)
+                or version == LEGACY_VERSION):
+            raise RuntimeError("Invalid BlackFox CAD release manifest.")
+        asset = manifest["assets"].get(rid)
+        if asset is not None:
+            size, digest = asset["size"], asset["sha256"]
+            if (type(size) is not int or not 0 < size <= MAX_ARCHIVE
+                    or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+                raise RuntimeError("Invalid BlackFox CAD release asset metadata.")
+            return version, size, digest
+    if require_import:
+        raise RuntimeError(f"The BlackFox CAD import converter is not available for {rid}.")
+    return LEGACY_VERSION, ARCHIVE_SIZES[rid], CHECKSUMS[rid]
+
+
+def _verified_archive(path, size, digest):
+    return (path.is_file() and path.stat().st_size == size
+            and _sha256_file(path) == digest)
+
+
+def _confirm_converter_download(parent, url, rid, size):
     message = QMessageBox(parent)
     message.setIcon(QMessageBox.Question)
     message.setWindowTitle("BlackFox DWG Converter — download permission")
-    message.setText("DWG export requires the BlackFox DWG converter.")
+    message.setText("This operation requires the BlackFox DWG converter.")
     message.setInformativeText(
-        "Platform: " + rid + "\\n"
-        "Download size: approximately " + f"{size_mb:.2f}" + " MiB\\n"
-        "Source: " + url + "\\n\\n"
-        "The file will be downloaded only if you choose Download. "
-        "It will be SHA-256 verified and cached for future exports."
+        f"Platform: {rid}\nDownload size: {size / (1024 * 1024):.2f} MiB\n"
+        f"Source: {url}\n\nChoose Download to allow the download. "
+        "The converter will be verified and saved for future use."
     )
     download = message.addButton("Download", QMessageBox.AcceptRole)
     message.addButton("Cancel", QMessageBox.RejectRole)
@@ -128,98 +197,122 @@ def _confirm_converter_download(parent, url, rid):
     return message.clickedButton() is download
 
 
-def _download_archive(url, destination):
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "BlackFox-CAD-Exporter/1.0.1"}
+def _download_archive(url, destination, size):
+    from core.tls import https_context
+    from urllib.parse import urlsplit
+
+    class ReleaseRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, request, fp, code, msg, headers, newurl):
+            target = urlsplit(newurl)
+            if (target.scheme != "https" or target.netloc not in
+                    {"github.com", "release-assets.githubusercontent.com",
+                     "objects.githubusercontent.com"}):
+                raise RuntimeError("Unexpected converter download redirect.")
+            return super().redirect_request(request, fp, code, msg, headers, newurl)
+
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=https_context()), ReleaseRedirect(),
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            with destination.open("wb") as output:
-                shutil.copyfileobj(response, output, 1024 * 1024)
-    except urllib.error.URLError as error:
-        # Some embedded Python distributions lack the OS certificate store.
-        # curl uses the system trust store on Windows; TLS verification stays ON.
-        reason = getattr(error, "reason", None)
-        if not isinstance(reason, ssl.SSLCertVerificationError):
-            raise
-        curl = shutil.which("curl.exe" if os.name == "nt" else "curl")
-        if not curl:
-            raise RuntimeError(
-                "HTTPS certificate verification failed; install a trusted "
-                "certificate bundle for Python or provide the verified ZIP manually."
-            ) from error
-        result = subprocess.run(
-            [curl, "--fail", "--location", "--silent", "--show-error",
-             "--proto", "=https", "--proto-redir", "=https",
-             "--connect-timeout", "30", "--max-time", "180",
-             "--output", str(destination), url],
-            capture_output=True, text=True, timeout=200, check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if result.returncode:
-            raise RuntimeError("Secure download failed: " + result.stderr[-1500:]) from error
+    request = urllib.request.Request(url, headers={"User-Agent": "BlackFox-CAD-Exporter/1.0.1"})
+    with opener.open(request, timeout=60) as response, destination.open("wb") as output:
+        remaining = size
+        while remaining:
+            chunk = response.read(min(remaining, 1024 * 1024))
+            if not chunk:
+                raise RuntimeError("Incomplete BlackFox CAD converter download.")
+            output.write(chunk)
+            remaining -= len(chunk)
+        if response.read(1):
+            raise RuntimeError("BlackFox CAD converter download exceeds its expected size.")
+        output.flush()
+        os.fsync(output.fileno())
 
 
-def get_converter(parent=None):
-    """Return the locally verified converter; ask before any network download.
+def _archive_members(path, filename, size, digest):
+    with path.open("rb") as stream:
+        data = stream.read(size + 1)
+    if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+        raise RuntimeError("BlackFox CAD converter archive changed before extraction.")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        members = archive.infolist()
+        if (len(members) != 3 or {info.filename for info in members} != {filename, *CONVERTER_MEMBERS}
+                or any(not 0 < info.file_size <= MAX_ARCHIVE for info in members)):
+            raise RuntimeError("Unexpected BlackFox CAD converter archive contents.")
+        return {info.filename: archive.read(info) for info in members}
 
-    Cancel returns None and leaves the requested DWG export untouched.
-    """
-    rid = _platform_id()
-    filename = "BlackFoxDWG.exe" if "windows" in rid else "BlackFoxDWG"
-    directory = Path(__file__).resolve().parent / "BlackFoxDWG" / VERSION / rid
-    archive_name = "blackfox-dwg-" + rid + ".zip"
-    archive_path = directory / archive_name
-    executable = _cached_converter(directory, archive_path, filename, rid)
-    if executable is not None:
-        return executable
 
-    # A previously downloaded and verified archive can restore missing files
-    # offline without asking to download again.
-    if _verified_archive(archive_path, rid):
-        _install_archive(archive_path, directory, filename)
-        return _cached_converter(directory, archive_path, filename, rid)
-
-    url = RELEASE_URL + archive_name
-    if not _confirm_converter_download(parent, url, rid):
-        return None
-
-    directory.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=".blackfox_download_", suffix=".zip",
-                               dir=str(directory))
-    os.close(fd)
+def _atomic_write(destination, data, mode=0o644, validate=None):
+    fd, name = tempfile.mkstemp(prefix=".blackfox_install_", dir=destination.parent)
     temporary = Path(name)
     try:
-        _download_archive(url, temporary)
-        if not _verified_archive(temporary, rid):
-            raise RuntimeError("BlackFox DWG ZIP failed SHA-256 verification.")
-        _install_archive(temporary, directory, filename)
-        os.replace(str(temporary), str(archive_path))
-        executable = _cached_converter(directory, archive_path, filename, rid)
-        if executable is None:
-            raise RuntimeError("BlackFox DWG cache verification failed.")
-        return executable
+        with os.fdopen(fd, "wb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.chmod(mode)
+        if validate is not None:
+            validate(temporary)
+        os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
 
 
-def _install_archive(archive_path, directory, filename):
-    expected = {filename, *CONVERTER_MEMBERS}
-    with zipfile.ZipFile(archive_path) as archive:
-        if set(archive.namelist()) != expected:
-            raise RuntimeError("Unexpected converter ZIP contents.")
-        for member in (filename, *CONVERTER_MEMBERS):
-            data = archive.read(member)
-            fd, name = tempfile.mkstemp(prefix=".blackfox_install_", dir=str(directory))
+def get_converter(parent=None, *, require_import=False):
+    """Resolve and validate the converter before each execution."""
+    from core.extensions import user_plugins_dir
+
+    rid, filename, arch = _blackfox_platform()
+    version, size, digest = _release_metadata(rid, require_import)
+    archive_name = f"blackfox-dwg-{rid}.zip"
+    plugins = user_plugins_dir().resolve()
+    directory = plugins.parent / "extension-data" / "blackfox_cad_exporter" / "bin" / version / rid
+    if directory.resolve() != directory:
+        raise RuntimeError("The BlackFox CAD converter directory contains a redirect.")
+    archive_path = directory / archive_name
+    executable = directory / filename
+    if not _verified_archive(archive_path, size, digest):
+        legacy = Path(__file__).resolve().parent / "BlackFoxDWG" / f"v{version}" / rid / archive_name
+        if version == LEGACY_VERSION and _verified_archive(legacy, size, digest):
+            data = legacy.read_bytes()
+            if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+                raise RuntimeError("The legacy BlackFox CAD converter archive changed during migration.")
+            directory.mkdir(parents=True, exist_ok=True)
+            _atomic_write(archive_path, data)
+        else:
+            url = f"https://github.com/{CONVERTER_REPOSITORY}/releases/download/v{version}/{archive_name}"
+            if not _confirm_converter_download(parent, url, rid, size):
+                return None
+            directory.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(prefix=".blackfox_download_", suffix=".zip", dir=directory)
+            os.close(fd)
             temporary = Path(name)
             try:
-                with os.fdopen(fd, "wb") as output:
-                    output.write(data)
-                if member == filename and not filename.endswith(".exe"):
-                    temporary.chmod(0o755)
-                os.replace(str(temporary), str(directory / member))
+                _download_archive(url, temporary, size)
+                if not _verified_archive(temporary, size, digest):
+                    raise RuntimeError("BlackFox CAD converter archive failed size or SHA-256 verification.")
+                os.replace(temporary, archive_path)
             finally:
                 temporary.unlink(missing_ok=True)
+
+    def validate_executable(path):
+        if _blackfox_binary_architecture(path, sys.platform) != arch:
+            raise RuntimeError("BlackFox CAD converter executable does not match the native architecture.")
+
+    members = _archive_members(archive_path, filename, size, digest)
+    for member in (*CONVERTER_MEMBERS, filename):
+        destination = directory / member
+        data = members[member]
+        if (destination.is_symlink() or not destination.is_file()
+                or destination.stat().st_size != len(data)
+                or _sha256_file(destination) != hashlib.sha256(data).hexdigest()):
+            if member == filename:
+                _atomic_write(destination, data, 0o755, validate_executable)
+            else:
+                _atomic_write(destination, data)
+    validate_executable(executable)
+    if sys.platform != "win32" and not os.access(executable, os.X_OK):
+        executable.chmod(0o755)
+    return executable
 
 
 def xyz(v):
@@ -522,18 +615,18 @@ def write_mesh(space, mesh, known, default_layer, counts, options=None):
 
 
 def placement_matrix(raw):
-    """Normalize Qt column-major flat arrays and 4x4 matrices to row-indexed values."""
+    """Normalize Qt matrices and legacy column-major flat arrays to rows."""
     if raw is None:
         return None
     if hasattr(raw, "copyDataTo"):
         values = list(raw.copyDataTo())
-        return [[float(values[c * 4 + r]) for c in range(4)] for r in range(4)]
+        return [[float(values[r * 4 + c]) for c in range(4)] for r in range(4)]
     if hasattr(raw, "tolist"):
         raw = raw.tolist()
     if len(raw) == 4 and all(hasattr(row, "__len__") and len(row) == 4 for row in raw):
         return [[float(v) for v in row] for row in raw]
     if len(raw) == 16:
-        # Assume column-major, matching QMatrix4x4.copyDataTo.
+        # Legacy raw flat arrays use OpenGL column order.
         return [[float(raw[c * 4 + r]) for c in range(4)] for r in range(4)]
     raise ValueError("Unrecognized component placement matrix")
 
@@ -721,6 +814,57 @@ def _export_annotations(doc, model, scene, known, counts, selected_only=False, o
         counts["texts"] += 1
 
 
+def _cad_definition_key(group):
+    return id(group.mesh), tuple(
+        (_cad_definition_key(child), child.layer,
+         tuple(tuple(row) for row in placement_matrix(child.xform)) if child.xform is not None else None)
+        for child in group.children
+    )
+
+
+def _cad_insert_matrix(matrix):
+    from ezdxf.math import Matrix44, Vec3
+
+    rows = placement_matrix(matrix)
+    x, y, z = (Vec3(rows[0][i], rows[1][i], rows[2][i]) for i in range(3))
+    sx, sy, sz = (axis.magnitude for axis in (x, y, z))
+    if min(sx, sy, sz) < 1e-10:
+        raise ValueError("CAD block instance has a degenerate transform.")
+    x, y, z = x / sx, y / sy, z / sz
+    if max(abs(x.dot(y)), abs(x.dot(z)), abs(y.dot(z))) > 1e-5:
+        raise ValueError("A sheared CAD block instance cannot be represented by a DXF INSERT.")
+    # Qt stores transforms in float32. Remove rounding drift before constructing
+    # the strictly orthogonal double-precision coordinate system of an INSERT.
+    corrected_x = (x - z * x.dot(z)).normalize()
+    corrected_y = z.cross(corrected_x)
+    if y.dot(corrected_y) < 0:
+        corrected_y = -corrected_y
+    return Matrix44([
+        *(corrected_x * sx), 0,
+        *(corrected_y * sy), 0,
+        *(z * sz), 0,
+        rows[0][3], rows[1][3], rows[2][3], 1,
+    ])
+
+
+def _write_cad_component(space, group, doc, definitions, known, counts, options):
+    layer = safe_layer(group.layer, known)
+    signature = _cad_definition_key(group)
+    name = definitions.get(signature)
+    if name is None:
+        name = f"BLACKFOX_CAD_{len(definitions) + 1:04d}"
+        definitions[signature] = name
+        block = doc.blocks.new(name)
+        counts["blocks"] += 1
+        write_mesh(block, group.mesh, known, "0", counts, options)
+        for child in group.children:
+            _write_cad_component(block, child, doc, definitions, known, counts, options)
+    insert = space.add_blockref(name, (0, 0, 0), dxfattribs={"layer": layer})
+    if group.xform is not None:
+        insert.transform(_cad_insert_matrix(group.xform))
+    counts["inserts"] += 1
+
+
 def export(scene, filename, selected_only=False, options=None, dxf_version="R2010"):
     options = options or {"faces": True, "edges": True, "text": True, "annotations": True}
     import ezdxf
@@ -754,7 +898,11 @@ def export(scene, filename, selected_only=False, options=None, dxf_version="R201
     write_mesh(model, loose, known, "0", counts, options)
 
     definitions = {}
+    cad_definitions = {}
     for group in export_groups:
+        if (getattr(group, "ext", None) or {}).get("blackfox_cad_block"):
+            _write_cad_component(model, group, doc, cad_definitions, known, counts, options)
+            continue
         mesh = getattr(group, "mesh", None)
         if mesh is None:
             continue
@@ -1099,79 +1247,162 @@ class ExportSelected3DDXF(Export3DDXF):
     selected_only = True
 
 
-# v0.6.3: independent point creation UI. The original exporter remains intact.
-def _point_dialog(app):
-    from PySide6.QtGui import QVector3D
-    from core.guide import Guide
-    from core.history import AddGuideCommand
+def _restore_cad_hierarchy(scene, doc, stats, scale, make_faces):
+    from core.group import Group
+    from core.layers import Layer
+    from formats.dxf_in import (
+        _Bucket, _SAGITTA_M, _bucket_one, _build_mesh, _faces_from_outlines, _fold_xform,
+    )
 
-    dlg = QDialog(app.window)
-    dlg.setWindowTitle("Point Tool — XYZ")
-    layout = QVBoxLayout(dlg)
-    form = QFormLayout()
-    fields = []
-    for axis in ("X", "Y", "Z"):
-        spin = QDoubleSpinBox(dlg)
-        spin.setRange(-1e9, 1e9)
-        spin.setDecimals(6)
-        spin.setSingleStep(0.1)
-        spin.setSuffix(" m")
-        form.addRow(axis, spin)
-        fields.append(spin)
-    layout.addLayout(form)
-    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-    buttons.accepted.connect(dlg.accept)
-    buttons.rejected.connect(dlg.reject)
-    layout.addWidget(buttons)
-    if dlg.exec() != QDialog.Accepted:
+    sagitta = max(_SAGITTA_M / scale, 1e-6)
+    offset = stats.get("offset") or (0.0, 0.0, 0.0)
+    origin = (0.0, 0.0, 0.0)
+    prototypes = {}
+    warnings = Counter()
+
+    def placements(entities, ancestors, displacement):
+        for insert in entities:
+            if insert.dxftype() != "INSERT":
+                continue
+            name = insert.dxf.name
+            key = name.casefold()
+            if key in ancestors or len(ancestors) >= 64:
+                warnings["cyclic or too deeply nested block insert"] += 1
+                continue
+            if key not in prototypes:
+                block = doc.blocks.get(name)
+                if block is None:
+                    warnings["missing block definition"] += 1
+                    continue
+                bucket = _Bucket()
+                for entity in block:
+                    if entity.dxftype() != "INSERT":
+                        _bucket_one(entity, "0", sagitta, {}, [0], {"0": bucket})
+                if bucket.points:
+                    warnings["points inside block definitions"] += len(bucket.points)
+                mesh = _build_mesh(bucket, scale, origin)
+                if make_faces:
+                    _faces_from_outlines(mesh)
+                prototypes[key] = block, mesh
+            block, mesh = prototypes[key]
+            layer = insert.dxf.layer
+            instances = insert.multi_insert() if insert.mcount > 1 else (insert,)
+            for occurrence in instances:
+                children = list(placements(block, (*ancestors, key), origin))
+                if not children and not (mesh.edges or mesh.faces):
+                    continue
+                instance = Group(mesh, name=name)
+                instance.xform = _fold_xform(occurrence.matrix44(), scale, displacement)
+                instance.ext = {"blackfox_cad_block": True}
+                if layer != "0":
+                    instance.layer = layer
+                    if scene.layer(layer) is None:
+                        scene.layers.append(Layer(layer))
+                instance.adopt(children)
+                yield instance
+
+    roots = list(placements(doc.modelspace(), (), offset))
+    previous = sum(stats.get("components", {}).values())
+    if previous:
+        del scene.groups[-previous:]
+    scene.groups.extend(roots)
+    stats["groups"] += len(roots) - previous
+    stats["block_warnings"] = warnings
+
+
+def _load_cad_dxf(window, path, source, converter_warnings):
+    from formats.dxf_in import load_dxf, open_document, suggest_unit_scale
+
+    doc = open_document(path)
+    suggested, _ = suggest_unit_scale(doc)
+    options = window._dxf_options(source, suggested)
+    if options is None:
         return
-    position = QVector3D(*(f.value() for f in fields))
+    scale, make_faces = options
+    if scale is None:
+        scale = suggested or 1.0
+    has_blocks = bool(doc.modelspace().query("INSERT"))
+    progress, report = window._import_progress(f"Importing {source.name}…")
+    stats = {}
+
+    def load(scene):
+        stats.update(load_dxf(scene, path, progress=report, scale=scale,
+                              doc=doc, name=source.stem, make_faces=make_faces))
+        if has_blocks:
+            _restore_cad_hierarchy(scene, doc, stats, scale, make_faces)
+
+    command = window._run_import(
+        load, progress, "Import 3D CAD failed",
+        describe=lambda exc: window._dxf_failure_text(exc, source),
+    )
+    if command is None:
+        return
+    window._prepare_import_display(command, report)
+    progress.close()
+    window._on_zoom_extents()
+    window.viewport.update()
+    summary = (f"Imported {source.name}: {stats.get('edges', 0)} edges, "
+               f"{stats.get('groups', 0)} groups, {stats.get('points', 0)} guide points")
+    window.statusBar().showMessage(summary + window._survey_note(stats.get("offset")), 8000)
+    warnings = [converter_warnings] if converter_warnings else []
+    layouts = [doc.modelspace()]
+    blocks_seen = set()
+    curved = set()
+    for layout in layouts:
+        for entity in layout:
+            kind = entity.dxftype()
+            if kind == "INSERT":
+                name = entity.dxf.name
+                if name not in blocks_seen:
+                    blocks_seen.add(name)
+                    block = doc.blocks.get(name)
+                    if block is not None:
+                        layouts.append(block)
+            elif (kind in {"ARC", "CIRCLE", "ELLIPSE", "SPLINE"}
+                  or (kind == "LWPOLYLINE" and entity.has_arc)):
+                curved.add(kind)
+    if curved:
+        warnings.append("IngeTrazo imported these curves as segmented contours: "
+                        + ", ".join(sorted(curved)))
+    if stats.get("block_warnings"):
+        warnings.append("IngeTrazo omitted " + ", ".join(
+            f"{count} {kind}" for kind, count in sorted(stats["block_warnings"].items())))
+    if any(len(layout) for layout in doc.layouts if layout.name != "Model"):
+        warnings.append("IngeTrazo imports model space. Paper-space layouts were omitted.")
+    if stats.get("skipped"):
+        skipped = ", ".join(f"{kind} ({count})" for kind, count in sorted(stats["skipped"].items()))
+        warnings.append("IngeTrazo skipped these entities: " + skipped)
+    if warnings:
+        QMessageBox.warning(window, "Import 3D CAD", "\n\n".join(warnings))
+
+
+def _import_cad(app):
+    title = "Import 3D CAD"
+    filename, _ = QFileDialog.getOpenFileName(
+        app.window, title, "",
+        "CAD and mesh files (*.dxf *.dwg *.obj *.stl *.dae *.fbx *.gltf *.glb)",
+    )
+    if not filename:
+        return
+    source = Path(filename)
     try:
-        app.viewport.history.execute(AddGuideCommand(Guide(position)))
-        app.viewport.notify_scene_changed()
-        app.viewport.flash_status("Construction point created", 2500)
+        converter = get_converter(app.window, require_import=True)
+        if converter is None:
+            return
+        with tempfile.TemporaryDirectory(prefix="blackfox-cad-import-") as folder:
+            intermediate = Path(folder) / "converted.dxf"
+            result = subprocess.run(
+                [str(converter), "convert", str(source), str(intermediate), "R2018"],
+                capture_output=True, encoding="utf-8", errors="replace",
+                timeout=180, check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode:
+                details = result.stderr.strip() or result.stdout.strip()
+                raise RuntimeError(details[-2500:] or f"Converter exited with code {result.returncode}")
+            _load_cad_dxf(app.window, intermediate, source, result.stderr.strip()[-2500:])
     except Exception as exc:
-        QMessageBox.critical(app.window, "Point Tool", str(exc))
-
-
-def _activate_click_point_tool(app):
-    """Install an interactive drawing tool without adding a top-level menu entry."""
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QVector3D
-    from core.guide import Guide
-    from core.history import AddGuideCommand
-
-    class ClickPointTool(Tool):
-        name = "Point Tool"
-        description = "Click to place construction points; Esc to finish."
-        uses_snap = True
-        qt_cursor = Qt.CrossCursor
-
-        def on_activate(self, viewport):
-            viewport.flash_status("Point Tool: click to place points; Esc to finish", 4000)
-
-        def on_deactivate(self, viewport):
-            pass
-
-        def on_click(self, ctx):
-            viewport = ctx.viewport
-            try:
-                point = QVector3D(ctx.world)
-                viewport.history.execute(AddGuideCommand(Guide(point)))
-                viewport.notify_scene_changed()
-                viewport.flash_status("Point created — click again or Esc", 1600)
-            except Exception as exc:
-                QMessageBox.critical(viewport.window(), "Point Tool", str(exc))
-
-        def on_cancel(self, viewport):
-            # Esc normally cancels the current operation. Switch to Select.
-            try:
-                from tools.select import SelectTool
-                viewport.set_active_tool(SelectTool())
-            except Exception:
-                viewport.set_active_tool(None)
-
-    app.viewport.set_active_tool(ClickPointTool())
+        QMessageBox.critical(app.window, title, str(exc))
 
 
 def _show_about(parent):
@@ -1189,8 +1420,8 @@ def _show_about(parent):
         <p><b>Version 1.0.1</b> &middot; November 2026</p>
         <p>A free and open-source extension for exporting 3D geometry,
         dimensions, text and numbered survey points from IngeTrazo to DXF and DWG.</p>
-        <p>Includes interactive Point Tool and Point Tool (X,Y,Z)
-        for precise construction-point placement.</p>
+        <p>Imports DXF, DWG and mesh files. Use IngeTrazo's native Point tool
+        to place guide points for CAD export.</p>
         <p><b>Project creator:</b> David Mavrov<br>
         <b>Development assistance:</b> ChatGPT (OpenAI)<br>
         <b>Additional ideas:</b> Gemini (Google), including suggesting AcadRust.</p>
@@ -1227,7 +1458,6 @@ def setup(app):
     sub = app.add_menu("3D CAD Exporter")
     sub.addAction("Export 3D CAD", lambda: Export3DDXF().on_activate(app.viewport))
     sub.addAction("Export 3D CAD (Selected Geometry)", lambda: ExportSelected3DDXF().on_activate(app.viewport))
-    sub.addAction("Point Tool", lambda: _activate_click_point_tool(app))
-    sub.addAction("Point Tool (X,Y,Z)", lambda: _point_dialog(app))
+    sub.addAction("Import 3D CAD", lambda: _import_cad(app))
     sub.addSeparator()
     sub.addAction("About…", lambda: _show_about(app.window))
