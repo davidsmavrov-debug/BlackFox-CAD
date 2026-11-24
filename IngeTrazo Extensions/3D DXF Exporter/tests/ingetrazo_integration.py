@@ -139,7 +139,7 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
 
     drawing = ezdxf.new("R2018")
     drawing.units = 6
-    drawing.layers.new("structure")
+    drawing.layers.new("structure", dxfattribs={"color": 3})
     prototype = drawing.blocks.new("Part")
     prototype.add_line((0, 0, 0), (2, 0, 0))
     drawing.modelspace().add_blockref("Part", (5, 0, 0), dxfattribs={"layer": "structure"})
@@ -155,6 +155,7 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
     assert groups[1].xform.column(0).x() == -1
 
     assert all(g.layer == "structure" for g in groups)
+    assert window.viewport.scene.layer("structure").color == (0.0, 1.0, 0.0)
     native = folder / "roundtrip.igz"
     window._do_save(native)
     assert native.is_file()

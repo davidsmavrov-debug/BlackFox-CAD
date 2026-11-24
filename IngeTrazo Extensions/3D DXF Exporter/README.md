@@ -19,7 +19,8 @@ or by entering `x;y;z`. The exporter writes model guide points as DXF
 `POINT` entities. CAD points in model space import as native guide points.
 
 Repeated and nested CAD blocks import as native components with shared
-geometry and separate placements. The DXF/DWG exporter retains the hierarchy
+geometry and separate placements. New tags use the source layer's color,
+visibility and lock state. The DXF/DWG exporter retains the hierarchy
 for those imported components. IngeTrazo segments analytic curves into
 selectable contours and skips some annotations and objects. Model-space CAD
 points import as guide points. Points within block definitions and paper

@@ -1310,6 +1310,22 @@ def _restore_cad_hierarchy(scene, doc, stats, scale, make_faces):
     stats["block_warnings"] = warnings
 
 
+def _apply_cad_layer_properties(scene, doc, existing_names):
+    from ezdxf.colors import aci2rgb
+
+    for layer in scene.layers:
+        if layer.name in existing_names or layer.name not in doc.layers:
+            continue
+        cad_layer = doc.layers.get(layer.name)
+        layer.visible = not (cad_layer.is_off() or cad_layer.is_frozen())
+        layer.locked = cad_layer.is_locked()
+        color = cad_layer.rgb
+        if color is None and 1 <= cad_layer.color <= 255 and cad_layer.color != 7:
+            color = aci2rgb(cad_layer.color)
+        if color is not None:
+            layer.color = tuple(channel / 255.0 for channel in color)
+
+
 def _load_cad_dxf(window, path, source, converter_warnings):
     from formats.dxf_in import load_dxf, open_document, suggest_unit_scale
 
@@ -1326,10 +1342,12 @@ def _load_cad_dxf(window, path, source, converter_warnings):
     stats = {}
 
     def load(scene):
+        existing_names = {layer.name for layer in scene.layers}
         stats.update(load_dxf(scene, path, progress=report, scale=scale,
                               doc=doc, name=source.stem, make_faces=make_faces))
         if has_blocks:
             _restore_cad_hierarchy(scene, doc, stats, scale, make_faces)
+        _apply_cad_layer_properties(scene, doc, existing_names)
 
     command = window._run_import(
         load, progress, "Import 3D CAD failed",
