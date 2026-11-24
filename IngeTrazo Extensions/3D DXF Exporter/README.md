@@ -1,4 +1,4 @@
-# BlackFox CAD Exporter v1.0.1
+# BlackFox CAD Exporter v1.0.2
 
 ![BlackFox CAD Exporter](blackfox_cad_exporter.png)
 
@@ -6,9 +6,11 @@ Free and open-source IngeTrazo extension for importing CAD and mesh files and ex
 
 ## Install
 
-Place `BlackFox_CAD_Exporter_v1_0_1.py` in IngeTrazo's **Extensions > Open plugins folder**, then restart IngeTrazo. The extension requires `ezdxf` in IngeTrazo's Python environment. The image is for the extension's GitHub/catalog listing; it does not need to be installed alongside the Python file.
+Place `BlackFox_CAD_Exporter_v1_0_2.py` in IngeTrazo's **Extensions > Open plugins folder**, then restart IngeTrazo. If you already have an older version installed, remove its Python file from the plugins folder before restarting. The image is for the extension's GitHub/catalog listing; it does not need to be installed alongside the Python file.
 
 ## Import and export
+
+Use **3D CAD Exporter > Open 3D CAD** to open a file as a new drawing.
 
 Use **3D CAD Exporter > Import 3D CAD** to import DXF, DWG, OBJ, STL, COLLADA,
 FBX, glTF or GLB into the current drawing. Confirm the suggested units in
@@ -27,25 +29,27 @@ points import as guide points. Points within block definitions and paper
 space stay in the standalone converter workflow. IngeTrazo reports
 large-coordinate recentering in the import status.
 
+Both DXF and DWG offer R12, R13, R14, R2000, R2004, R2007, R2010, R2013
+and R2018. Older formats can omit entities and metadata they cannot represent.
+
 ## Converter
 
-The first CAD import or DWG export prompts before downloading the native
-BlackFox converter. The prompt shows the asset source, platform and size.
-The installer checks the release metadata, archive size and SHA-256, and
-the executable architecture. The converter and its notices are retained
-in a versioned cache outside the plugins folder:
+The first Open, Import, or Export prompts before downloading
+[BlackFox DWG Converter v1.2.6](https://github.com/davidsmavrov-debug/blackfox-dwg-converter/releases/tag/v1.2.6).
+The extension detects the native architecture on Windows, Linux, and macOS
+and selects the matching x64 or ARM64 archive. The prompt shows the source,
+platform, and download size. The extension checks its embedded release
+manifest, archive size and SHA-256, and executable architecture.
+
+The converter and its notices are kept outside the plugins folder.
 
 ```text
 <IngeTrazo user-data>/extension-data/blackfox_cad_exporter/bin/<version>/<target>/
 ```
 
-Replacing the Python extension leaves this cache intact. A cached
-release archive can restore its executable offline. A verified v1.0.0
-archive in the old plugin location can migrate for legacy DWG export.
-
-CAD import requires the bidirectional converter. The local development
-source keeps the published v1.0.0 DWG export fallback until a release
-build embeds metadata for the new platform archives.
+Replacing the Python extension leaves this cache available. A verified
+archive can repair its executable offline. An older converter release
+uses a separate cache and the extension obtains the compatible release on demand.
 
 ## Credits and licenses
 
@@ -54,25 +58,18 @@ build embeds metadata for the new platform archives.
 - Additional ideas, including suggesting AcadRust: Gemini (Google)
 - AcadRust: Hakan AK, Mozilla Public License 2.0 (MPL-2.0); see the license and notices bundled with the converter
 - BlackFox CAD Exporter: GPL-3.0-or-later
-- ezdxf: MIT; PySide6 / Qt for Python: LGPLv3, GPLv3 or commercial licensing
-
-## Publishing the image
-
-For a GitHub repository README, keep `blackfox_cad_exporter.png` next to this README so the Markdown image reference resolves. The IngeTrazo extension catalog may require its own metadata or submission process; bundling the PNG does not automatically update that external listing.
+- PySide6 / Qt for Python: LGPLv3, GPLv3 or commercial licensing
 
 ## Verification status
 
-On Windows x86-64 with IngeTrazo 0.6.3, both the Python and Rust engines
-passed the native Point workflow, DXF and DWG point round-trips, repeated
-imports, mirrored and tilted nested components, mesh imports, confirmed
-unit conversion, project saving and reopening, and import undo/redo. Tests also covered initial consent, persistent reuse,
-cache repair, version selection, and migration. The new converter
-download was tested with local test transport. The published v1.0.0
-download was tested over HTTPS.
+On Windows x64 with IngeTrazo 0.6.3, both engines passed R13 and R14 DXF and
+DWG export/read-back, native geometry and annotation exchange, nested
+components, mesh imports, and import undo/redo. The converter installer
+was tested against GitHub over HTTPS, including declined consent, persistent
+reuse, offline repair, and manifest rejection.
 
-To reproduce the local integration check with both engines, run
-`python tests/ingetrazo_integration.py <IngeTrazo-source> <converter>`
-once with `INGETRAZO_RUST=0` and once with `INGETRAZO_RUST=1`.
-The tests use an isolated profile and an offscreen window. Add
-`--mesh-fixtures <converter-source>/tests/roundtrip.py` to exercise all
-six mesh input formats.
+Run `python tests/ingetrazo_integration.py <IngeTrazo-source> <converter>`
+with `INGETRAZO_RUST=0` and `INGETRAZO_RUST=1` to check both engines. Add
+`--mesh-fixtures <converter-source>/tests/roundtrip.py` for the mesh formats.
+Run `python tests/converter_installation.py <IngeTrazo-source>` to check
+platform selection and installation using an isolated cache.
