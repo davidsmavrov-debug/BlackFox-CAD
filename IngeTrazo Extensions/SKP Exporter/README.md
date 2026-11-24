@@ -1,4 +1,4 @@
-# BlackFox SKP Exporter v1.0.1
+# BlackFox SKP Exporter v1.0.2
 
 ![BlackFox SKP Exporter](blackfox_skp_exporter.png)
 
@@ -6,7 +6,13 @@ Free and open-source IngeTrazo extension for opening, importing, and exporting S
 
 ## Install
 
-Download [BlackFox_SKP_EXPORTER_1.0.1.py](https://github.com/davidsmavrov-debug/BlackFox-CAD/releases/download/skp-exporter-v1.0.1/BlackFox_SKP_EXPORTER_1.0.1.py). Place it directly in IngeTrazo's **Extensions > Open plugins folder**, then restart IngeTrazo. If you installed the earlier ZIP, move its `BlackFoxSKP` package out of the plugins folder before installing the standalone file.
+Download [BlackFox_SKP_EXPORTER_1.0.2.py](https://github.com/davidsmavrov-debug/BlackFox-CAD/releases/download/skp-exporter-v1.0.2/BlackFox_SKP_EXPORTER_1.0.2.py). Place it directly in IngeTrazo's **Extensions > Open plugins folder**, then restart IngeTrazo. For a manual upgrade, move the previous standalone file or earlier `BlackFoxSKP` package out of the plugins folder before installing the new file.
+
+## Nested groups and components
+
+On IngeTrazo 0.6.3, nested SKP groups and components keep their original tree. A component's own geometry stays on its definition, so editing geometry or moving a nested part in one copy updates the matching copies. Standalone groups remain independent.
+
+The Windows benchmark preserved 5 roots, 15 hierarchy nodes, 194 faces, and 492 edges on both the Python and Rust engines. Linked edits, save and reopen, and import undo and redo were verified on both engines.
 
 ## SKP converter
 
@@ -26,12 +32,12 @@ The converter is stored outside the replaceable plugins directory, under `<IngeT
 
 The standalone extension's first-run download and SKP command prompts were verified on Windows. Native converter smoke tests passed on Windows, Linux, and macOS on x86-64 and ARM64. The file-dialog tests also passed on all three operating systems.
 
-The earlier ZIP is retained as a release asset. Use the standalone Python file for a new installation.
+The earlier ZIP remains available in the [v1.0.0 release](https://github.com/davidsmavrov-debug/BlackFox-CAD/releases/tag/skp-exporter-v1.0.0). Use the standalone Python file for new installations.
 
 ## Known limitations
 
 - **SketchUp versions.** Basic geometry fixtures passed for all 21 offered versions, covering SketchUp 3–8 and 2013–2027. The 2021–2027 export options use a shared SKP container. Compatibility with each corresponding SketchUp application remains unverified.
-- **Round-trip fidelity.** Some nested models use a hierarchy import path that preserves geometry and placements with limited support for materials, annotations, section settings, and cameras. BlackFox approximates texture mappings that IngeTrazo cannot represent exactly.
+- **Round-trip fidelity.** The nested hierarchy import path requires an empty tab for **Import SKP**. **Open SKP** can create that tab for you. The hierarchy path has limited support for materials, annotations, section settings, and cameras. BlackFox approximates texture mappings that IngeTrazo cannot represent exactly.
 - **IFC classifications.** The IFC2x3 and IFC4 SKP benchmarks preserved their classification metadata through export and re-import. Other schemas, class combinations, and authoring workflows have limited verification.
 - **Large models.** IngeTrazo stays responsive while the converter reads the file. Building a very large scene can still briefly pause the interface.
 

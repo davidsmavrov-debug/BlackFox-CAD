@@ -2,7 +2,7 @@ import math
 # SPDX-License-Identifier: GPL-3.0-only
 """Import and export SketchUp SKP models in IngeTrazo."""
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 from pathlib import Path
 import json
@@ -2303,28 +2303,32 @@ def walk_nodes(roots):
         yield node
         yield from walk_nodes(node["children"])
 
-def build_selective(native):
+def build_selective(native, *, share_definition_parts=False):
     cad = native['cad']
     runs = cad['geometry']
     roots = cad['scene_hierarchy']
     identity = [1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.]
     shared_meshes = {}
     run_by_path = {}
-    # A run is a definition-geometry identity in this JSON schema.
-    # Only components share native meshes; SketchUp groups remain independent.
-    shared_run_ids = {node["run_id"] for node in walk_nodes(roots) if not node["is_group"]}
-
-    def create(node, parent_world):
+    def create(node, parent_world, scope=None):
         ri = node['run_id']
         kind = node['is_group']
         world = node['world_transform_metres']
         path = tuple(node['instance_path'])
-        if ri in shared_run_ids:
-            if ri not in shared_meshes:
-                shared_meshes[ri] = mesh_from_run(runs[ri])
-            group_mesh = shared_meshes[ri]
+        if not kind:
+            mesh_key = ("component", ri)
+            child_scope = mesh_key if share_definition_parts else None
+        elif scope is not None:
+            # A group at this definition-relative position is the same
+            # part in every copy. A standalone group has no such scope.
+            mesh_key = scope + (ri,)
+            child_scope = mesh_key
         else:
-            group_mesh = mesh_from_run(runs[ri])
+            mesh_key = ("group", path)
+            child_scope = None
+        if mesh_key not in shared_meshes:
+            shared_meshes[mesh_key] = mesh_from_run(runs[ri])
+        group_mesh = shared_meshes[mesh_key]
         local = matmul(inverse_affine(parent_world), world)
         obj = Group(group_mesh, node.get('definition') or
                     ('SKP Group' if kind else 'SKP Component'))
@@ -2332,66 +2336,42 @@ def build_selective(native):
         obj.xform = matrix4(local)
         obj.hidden = bool(node.get('hidden', False))
         obj.locked = node['locked']
-        children = [create(child, world) for child in node['children']]
+        children = [create(child, world, child_scope + (i,) if child_scope else None)
+                    for i, child in enumerate(node['children'])]
         if children:
             obj.adopt(children)
-        run_by_path[path] = (ri, bool(node['children']))
+        run_by_path[path] = (ri, bool(node['children']), mesh_key)
         return obj
 
     return [create(root, identity) for root in roots], run_by_path
 
 def audit(roots, run_by_path, label):
-    from collections import defaultdict
-    by_run = defaultdict(list)
-    kinds_by_run = {}
-    by_mesh = defaultdict(list)
-    visited = []
+    mesh_by_definition = {}
+    definition_by_mesh = {}
+    visited = set()
 
     def walk(obj, path):
         if path not in run_by_path:
-            raise RuntimeError('Unexpected hierarchy path: %r' % (path,))
-        ri, is_container = run_by_path[path]
+            raise RuntimeError(f'Unexpected hierarchy path: {path}')
+        _, is_container, key = run_by_path[path]
         if bool(obj.children) != is_container:
-            raise RuntimeError('Hierarchy changed at %r' % (path,))
-        by_run[ri].append((path, id(obj.mesh), is_container))
-        kinds_by_run.setdefault(ri, obj.component)
-        if kinds_by_run[ri] != obj.component:
-            raise RuntimeError("Mixed group/component run identity")
-        by_mesh[id(obj.mesh)].append(path)
-        visited.append(path)
+            raise RuntimeError(f'Hierarchy changed at {path}')
+        mesh_id = id(obj.mesh)
+        if (mesh_by_definition.setdefault(key, mesh_id) != mesh_id
+                or definition_by_mesh.setdefault(mesh_id, key) != key):
+            raise RuntimeError(f'Geometry-owner sharing failed at {path}')
+        visited.add(path)
         for i, child in enumerate(obj.children):
             walk(child, path + (i,))
 
     for i, root in enumerate(roots):
         walk(root, (i,))
-    if len(visited) != len(run_by_path) or len(set(visited)) != len(visited):
+    if visited != run_by_path.keys():
         raise RuntimeError('Hierarchy occurrence count mismatch')
+    print(f'BlackFox hierarchy audit {label}: {len(visited)} occurrences, '
+          f'{len(mesh_by_definition)} geometry owners')
+    return len(mesh_by_definition)
 
-    print('\nBLACKFOX 2E.44 %s' % label)
-    print('TOTAL OCCURRENCES:', len(visited))
-    print('DISTINCT MESHES:', len(by_mesh))
-    ok = True
-    for ri in sorted(by_run):
-        entries = by_run[ri]
-        ids = [mid for _, mid, _ in entries]
-        if kinds_by_run[ri]:
-            valid = len(set(ids)) == 1
-            mode = 'SHARED'
-        else:
-            valid = len(set(ids)) == len(ids)
-            mode = 'PRIVATE'
-        ok &= valid
-        print(' RUN %d | OCCURRENCES %d | MODE %s | PASS %s' %
-              (ri, len(entries), mode, valid))
-    # Prevent accidentally merging distinct geometry runs.
-    run_mesh_sets = [{mid for _, mid, _ in by_run[ri]} for ri in sorted(by_run)]
-    if any(a & b for i, a in enumerate(run_mesh_sets) for b in run_mesh_sets[i+1:]):
-        ok = False
-        print(' ERROR: Different geometry runs share a mesh')
-    print('BLACKFOX 2E.44 %s RESULT: %s' % (label, 'PASS' if ok else 'FAIL'))
-    if not ok:
-        raise RuntimeError('Geometry-owner sharing invariants failed')
-    return len(by_mesh)
 
 def make_leaf_version(roots, path_runs):
     # Preserve every original node, its component/group status, and transform.
@@ -2401,7 +2381,7 @@ def make_leaf_version(roots, path_runs):
     def visit(node, path):
         for index, child in enumerate(list(node.children)):
             visit(child, path + (index,))
-        run_id, _ = path_runs[path]
+        run_id, _, _ = path_runs[path]
         if node.component and node.children and (node.mesh.faces or node.mesh.edges):
             original_mesh = node.mesh
             leaf = Group(original_mesh, name='BlackFox own geometry / run %d' % run_id)
@@ -2454,16 +2434,12 @@ def _import_native_hierarchy(scene, native_path):
     for hierarchy-schema files until its own regression gate passes.
     """
     native = prepare(native_path)
-    original, original_paths = build_selective(native)
-    roots, paths = build_selective(native)
-    audit(original, original_paths, 'INTEGRATED ORIGINAL')
-    audit(roots, paths, 'INTEGRATED BEFORE LEAVES')
-    leaves = make_leaf_version(roots, paths)
-    assert_same_geometry(original, roots)
+    from importlib.util import find_spec
 
-    # Verify source hierarchy against the untouched reconstruction. The leaf
-    # rewrite intentionally inserts synthetic children, so auditing its raw
-    # child counts against the SKP source would reject valid nested models.
+    supports_definition_parts = find_spec("core.component_parts") is not None
+    roots, paths = build_selective(native, share_definition_parts=supports_definition_parts)
+    audit(roots, paths, 'before insertion')
+
     def verify_lock_tree(objects, source_nodes, path=()):
         if len(objects) != len(source_nodes):
             raise AssertionError('Lock audit hierarchy cardinality mismatch at %r' % (path,))
@@ -2475,7 +2451,13 @@ def _import_native_hierarchy(scene, native_path):
                 raise AssertionError('Lock state mismatch at %r' % (current_path,))
             verify_lock_tree(obj.children, source['children'], current_path)
 
-    verify_lock_tree(original, native['cad']['scene_hierarchy'])
+    verify_lock_tree(roots, native['cad']['scene_hierarchy'])
+    leaves = {}
+    if not supports_definition_parts:
+        # Older hosts need a separate geometry child for a container.
+        original, _ = build_selective(native)
+        leaves = make_leaf_version(roots, paths)
+        assert_same_geometry(original, roots)
     # Verify that synthetic geometry leaves inherit their owning component's
     # lock state, without treating them as original SketchUp hierarchy nodes.
     def find_parent(roots, target):
@@ -2498,7 +2480,7 @@ def _import_native_hierarchy(scene, native_path):
         raise AssertionError('Hierarchy occurrence count mismatch')
     by_run = defaultdict(set)
     for path, leaf in leaves.items():
-        run_id, _ = paths[path]
+        run_id, _, _ = paths[path]
         by_run[run_id].add(id(leaf.mesh))
     if any(len(mesh_ids) != 1 for mesh_ids in by_run.values()):
         raise AssertionError('Shared component mesh identity mismatch')
@@ -2638,7 +2620,7 @@ def _import_skp(app, open_mode=False):
                 QMessageBox.information(
                     parent, 'BlackFox SKP - Hierarchy imported',
                     ('Opened a new SKP document.\n' if open_mode else 'Imported SKP into current document.\n') +
-                    'Phase 2E nested hierarchy and linked geometry inserted.\n'
+                    'Nested hierarchy and linked geometry imported.\n'
                     f"Roots: {hierarchy_stats['roots']}\n"
                     f"Occurrences: {hierarchy_stats['occurrences']}\n"
                     f"Geometry leaves: {hierarchy_stats['leaves']}\n"
